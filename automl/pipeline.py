@@ -1,3 +1,5 @@
+from typing import List
+
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
@@ -9,65 +11,111 @@ from sklearn import pipeline
 from automl import dataset
 
 
-def categorical_encoder(df: pd.DataFrame) -> pipeline.Pipeline:
-    imputer = impute.SimpleImputer(
-        strategy="constant", fill_value="", add_indicator=True
-    )
-    ordinal_encoder = preprocessing.OrdinalEncoder(
-        dtype=np.int32, handle_unknown="use_encoded_value", unknown_value=-1
-    )
-    encoder = pipeline.Pipeline(
-        steps=[("imputer", imputer), ("ordinal_encoder", ordinal_encoder)]
-    )
-    encoder.fit(df)
-    return encoder
+# TODO(eugenhotaj): Extract an Encoder interface.
+class CategoricalEncoder:
+    """Encodes arbitrary categorical variables into ints.
+
+    Missing values are imputed to the empty string and (optionally) an indicator colum
+    is added per column with missing values.
+    """
+
+    def __init__(self, columns: List[str], add_indicator: bool = False):
+        """Initializes a new CategoricalEncoder instance.
+
+        Args:
+            columns: The list of categorical columns to encode.
+            add_indicator: If True, an indicator column will be atted to the DataFrames
+                for each column which contains missing values.
+        """
+        self.columns = columns
+        self.add_indicator = add_indicator
+        self.n_missing_cols = None
+        self._imputer = impute.SimpleImputer(
+            strategy="constant", fill_value="", add_indicator=add_indicator
+        )
+        self._ordinal_encoder = preprocessing.OrdinalEncoder(
+            dtype=np.int32, handle_unknown="use_encoded_value", unknown_value=-1
+        )
+        self.encoder = pipeline.Pipeline(
+            steps=[
+                ("imputer", self._imputer),
+                ("ordinal_encoder", self._ordinal_encoder),
+            ]
+        )
+
+    def fit(self, ds: dataset.Dataset):
+        self.encoder.fit(ds.train[self.columns])
+        if self.add_indicator:
+            self.n_missing_cols = self._imputer.indicator_.features_.shape[1]
+
+    def transform(self, ds: dataset.Dataset):
+        for split in ("train", "valid", "test"):
+            split = getattr(ds, split)
+            encoded = self.encoder.transform(split[self.columns])
+            if self.n_missing_cols:
+                encoded = encoded[:, : -self.n_missing_cols]
+                missing = encoded[:, -self.n_missing_cols :]
+            split[self.columns] = encoded
+            if self.add_indicator and self.n_missing_cols:
+                # TODO(eugenhotaj): Handle missing indicator.
+                pass
+
+    def fit_transform(self, ds: dataset.Dataset):
+        self.fit(ds)
+        self.transform(ds)
 
 
-def label_encoder(df: pd.DataFrame) -> preprocessing.LabelEncoder:
-    encoder = preprocessing.LabelEncoder()
-    encoder.fit(df)
-    return encoder
+class LabelEncoder:
+    """Encodes a label colum into ints."""
+
+    def __init__(self, column: str):
+        """Initializes a new LabelEncoder instance.
+
+        Args:
+            column: The label column to encode.
+        """
+        self.column = column
+        self.encoder = preprocessing.LabelEncoder()
+
+    def fit(self, ds: dataset.Dataset):
+        self.encoder.fit(ds.train[self.column])
+
+    def transform(self, ds: dataset.Dataset):
+        for split in ("train", "valid", "test"):
+            split = getattr(ds, split)
+            split[self.column] = self.encoder.transform(split[self.column])
+
+    def fit_transform(self, ds: dataset.Dataset):
+        self.fit(ds)
+        self.transform(ds)
 
 
+# TODO(eugenhotaj): The pipeline should not just return the model, but rather a
+# predictor which takes as input raw data and produces predictions.
 def automl_pipeline(ds: dataset.Dataset, objective: str = "auc") -> lgb.Booster:
+    """Entry point for the AutoML pipeline.
+
+    Args:
+        ds: The Dataset to use for training and evaluating the AutoML pipeline.
+        objective: The main metric to optimize. Does not need to be differentiable.
+    Returns:
+        The best model found.
+    """
     # Preprocess features.
-    categorical_cols = ds.categorical_cols
-    if categorical_cols:
-        encoder = categorical_encoder(ds.train[categorical_cols])
-
-        encoded = encoder.transform(ds.train[categorical_cols])
-        n_presence = encoded.shape[1] - len(categorical_cols)
-        if n_presence > 0:
-            encoded, _ = encoded[:, :-n_presence], encoded[:, -n_presence:]
-        ds.train[categorical_cols] = encoded
-
-        encoded = encoder.transform(ds.valid[categorical_cols])
-        if n_presence > 0:
-            encoded, _ = encoded[:, :-n_presence], encoded[:, -n_presence:]
-        ds.valid[categorical_cols] = encoded
-
-        encoded = encoder.transform(ds.test[categorical_cols])
-        if n_presence > 0:
-            encoded, _ = encoded[:, :-n_presence], encoded[:, -n_presence:]
-        ds.test[categorical_cols] = encoded
-
+    if ds.categorical_cols:
+        CategoricalEncoder(columns=ds.categorical_cols).fit_transform(ds)
     # Preprocess label.
-    label_col = ds.label_col
-    encoder = label_encoder(ds.train[label_col])
-    ds.train[label_col] = encoder.transform(ds.train[label_col])
-    ds.valid[label_col] = encoder.transform(ds.valid[label_col])
-    ds.test[label_col] = encoder.transform(ds.test[label_col])
+    LabelEncoder(column=ds.label_col).fit_transform(ds)
 
-    feature_cols = ds.feature_cols
     train_data = lgb.Dataset(
-        ds.train[feature_cols],
-        label=ds.train[label_col],
-        feature_name=feature_cols,
-        categorical_feature=categorical_cols,
+        ds.train[ds.feature_cols],
+        label=ds.train[ds.label_col],
+        feature_name=ds.feature_cols,
+        categorical_feature=ds.categorical_cols,
     )
     valid_data = lgb.Dataset(
-        ds.valid[feature_cols],
-        label=ds.valid[label_col],
+        ds.valid[ds.feature_cols],
+        label=ds.valid[ds.label_col],
         reference=train_data,
     )
     params = {

@@ -38,8 +38,8 @@ def run_on_task(task_id: int) -> Dict[str, Tuple[float, float]]:
     return {key: (np.mean(value), np.std(value)) for key, value in metric.items()}
 
 
-def print_result(task_id: int, results: Dict[str, float]):
-    print(f"Results for task {task_id}:")
+def print_result(task_id: int, task_name: str, results: Dict[str, float]):
+    print(f"Results for task {task_id} [{task_name}]:")
     for key, value in results.items():
         mean, std = value
         print(f"  {key}: {round(mean, 3)} +/- {round(std, 3)}")
@@ -48,9 +48,9 @@ def print_result(task_id: int, results: Dict[str, float]):
 
 def main(args):
     ray.init(local_mode=args.local_mode)
-    futures = [run_on_task.remote(task) for task in BENCHMARK_TASKS]
-    for task, result in zip(BENCHMARK_TASKS, ray.get(futures)):
-        print_result(task, result)
+    futures = {k: run_on_task.remote(v) for k, v in BENCHMARK_TASKS.items()}
+    for task_name, result in zip(futures.keys(), ray.get(list(futures.values()))):
+        print_result(BENCHMARK_TASKS[task_name], task_name, result)
 
 
 if __name__ == "__main__":

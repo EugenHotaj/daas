@@ -7,7 +7,7 @@ import openml
 
 from automl import openml_utils
 
-BENCHMARK_TASKS = [7592, 9977, 9952]
+BENCHMARK_TASKS = {"adult": 7592, "nomao": 9977, "phoneme": 9952}
 FOLD_COL = "fold"
 
 
@@ -38,4 +38,4 @@ def download_openml_tasks(task_ids: List[int]):
 
 
 if __name__ == "__main__":
-    download_openml_tasks(BENCHMARK_TASKS)
+    download_openml_tasks(list(BENCHMARK_TASKS.values()))

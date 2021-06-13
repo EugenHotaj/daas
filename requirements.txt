@@ -1,5 +1,6 @@
-lightgbm>=3.2.1
-numpy>=1.20.3
-openml>=0.12.2
-pandas>=1.2.4
-sklearn>=0.24.2
+lightgbm
+numpy
+openml
+pandas
+sklearn
+ray
