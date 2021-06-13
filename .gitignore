@@ -1,3 +1,9 @@
+# Specific ignores for ray-automl.
+data/
+
+# Vim specific.
+*.un~
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
