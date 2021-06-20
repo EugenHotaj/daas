@@ -16,8 +16,9 @@ from download_data import BENCHMARK_TASKS
 def one_fold(task_id: int, fold: int) -> Dict[str, float]:
     ds = openml_utils.dataset_from_task(task_id, fold, n_valid_folds=2)
     model = pipeline.automl_pipeline(ds, "auc")
+    model.predict(ds)
+    predictions = ds.test[model.prediction_col]
     labels = ds.test[ds.label_col]
-    predictions = model.predict(ds)
     metric = {
         "auc": metrics.roc_auc_score(labels, predictions),
         "pr_auc": metrics.average_precision_score(labels, predictions),

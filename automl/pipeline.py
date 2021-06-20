@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import scipy
 from sklearn import impute
+from sklearn import linear_model
 from sklearn import pipeline
 from sklearn import preprocessing
 from sklearn import svm
@@ -180,6 +181,7 @@ class LightGBMModel:
     def __init__(self, objective: str, metric: str):
         self.objective = objective
         self.metric = metric
+        self.prediction_col = f"__{self.__class__.__name__}_predictions__"
 
         self.model_ = None
         self.feature_cols_ = None
@@ -213,15 +215,19 @@ class LightGBMModel:
             params, train_data, 300, valid_sets=[valid_data], early_stopping_rounds=10
         )
 
-    def predict(self, df: pd.DataFrame) -> None:
-        return self.model_.predict(
-            df.test[self.feature_cols_], num_iteration=self.model_.best_iteration
-        )
+    def predict(self, ds: dataset.Dataset) -> None:
+        for split in ("train", "valid", "test"):
+            split = getattr(ds, split)
+            split[self.prediction_col] = self.model_.predict(
+                split[self.feature_cols_], num_iteration=self.model_.best_iteration
+            )
 
 
 class LinearSVCModel:
-    def __init__(self):
+    def __init__(self) -> None:
+        self.prediction_col = f"__{self.__class__.__name__}_predictions__"
         self.model_ = None
+        self.scaler_ = None
         self.feature_cols_ = None
 
     def fit(self, ds: dataset.Dataset, encoders: Dict[type, Encoder]) -> None:
@@ -231,25 +237,16 @@ class LinearSVCModel:
         self.model_ = svm.LinearSVC(C=2 ** -7)
         self.model_.fit(ds.train[self.feature_cols_], ds.train[ds.label_col])
 
+        # Platt scaling.
+        self.scaler_ = linear_model.LogisticRegression(C=16.0)
+        X = self.model_.decision_function(ds.valid[self.feature_cols_]).reshape(-1, 1)
+        self.scaler_.fit(X, ds.valid[ds.label_col])
+
     def predict(self, ds: dataset.Dataset) -> None:
-        return self.model_.predict(ds.test[self.feature_cols_])
-
-
-# TODO(eugenhotaj): model should not be a string but a search space.
-def train_model(
-    ds: dataset.Dataset,
-    encoders: Dict[type, Encoder],
-    model: str,
-    objective: str,
-) -> Any:
-    if model == "lgbm":
-        model = LightGBMModel("binary", objective)
-    elif model == "svc":
-        model = LinearSVCModel()
-    else:
-        raise ValueError("Unknown model :: {model}.")
-    model.fit(ds, encoders)
-    return model
+        for split in ("train", "valid", "test"):
+            split = getattr(ds, split)
+            X = self.model_.decision_function(split[self.feature_cols_]).reshape(-1, 1)
+            split[self.prediction_col] = self.scaler_.predict_proba(X)[:, 1]
 
 
 # TODO(eugenhotaj): The pipeline should not just return the model, but rather a
@@ -281,9 +278,10 @@ def automl_pipeline(ds: dataset.Dataset, objective: str = "auc") -> Any:
     # Preprocess label.
     LabelEncoder(column=ds.label_col).fit_transform(ds)
 
-    # Train model.
-    model = train_model(
-        ds=ds, encoders=type_to_encoder, model="svc", objective=objective
-    )
+    # Train models.
+    models = [LightGBMModel("binary", objective), LinearSVCModel()]
+    for model in models:
+        model.fit(ds, type_to_encoder)
+        model.predict(ds)
 
-    return model
+    return model[0]
