@@ -2,5 +2,6 @@ lightgbm
 numpy
 openml
 pandas
-sklearn
 ray
+scipy
+sklearn

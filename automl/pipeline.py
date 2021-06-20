@@ -3,15 +3,15 @@ from typing import Any, Dict, List, Tuple
 import lightgbm as lgbm
 import numpy as np
 import pandas as pd
-from sklearn import base
+import scipy
 from sklearn import impute
-from sklearn import linear_model
-from sklearn import metrics
 from sklearn import pipeline
 from sklearn import preprocessing
 from sklearn import svm
 
 from automl import dataset
+
+_MISSING = "__missing_value__"
 
 
 class Encoder:
@@ -33,7 +33,6 @@ class Encoder:
         self._name = self.__class__.__name__
 
         self.preprocessed_cols_ = None
-        self.n_missing_cols_ = None
         self.indicator_cols_ = None
 
     def fit(self, ds: dataset.Dataset) -> None:
@@ -43,19 +42,23 @@ class Encoder:
         ]
         # TODO(eugenhotaj): This is pretty bad. We're assuming the child class creates
         # an imputer.
-        self.n_missing_cols_ = self._simple_imputer.indicator_.features_.shape[0]
+        indicator = self.encoder["simple_imputer"].indicator_
+        n_indicator_cols = indicator.features_.shape[0] if indicator else 0
         self.indicator_cols_ = [
-            f"__{self._name}_indicator_{i}__" for i in range(self.n_missing_cols_)
+            f"__{self._name}_indicator_{i}__" for i in range(n_indicator_cols)
         ]
 
     def transform(self, ds: dataset.Dataset) -> None:
         for split in ("train", "valid", "test"):
             split = getattr(ds, split)
-            encoded, missing = self.encoder.transform(split[self.columns]), None
-            if self.n_missing_cols_:
-                encoded = encoded[:, : -self.n_missing_cols_]
-                missing = encoded[:, -self.n_missing_cols_ :]
-                split[self.indicator_cols_] = missing
+            encoded, indicator = self.encoder.transform(split[self.columns]), None
+            # TODO(ehotaj): It's much more efficient to work with sparse matricies.
+            if scipy.sparse.issparse(encoded):
+                encoded = encoded.todense()
+            if self.indicator_cols_:
+                encoded = encoded[:, : -len(self.indicator_cols_)]
+                indicator = encoded[:, -len(self.indicator_cols_) :]
+                split[self.indicator_cols_] = indicator
             split[self.preprocessed_cols_] = encoded
 
     def fit_transform(self, ds: dataset.Dataset) -> None:
@@ -72,12 +75,11 @@ class CategoricalEncoder(Encoder):
 
     def __init__(self, columns: List[str]):
         self._simple_imputer = impute.SimpleImputer(
-            strategy="constant", fill_value="", add_indicator=True
+            strategy="constant", fill_value=_MISSING
         )
         self._ordinal_encoder = preprocessing.OrdinalEncoder(
             dtype=np.int32, handle_unknown="use_encoded_value", unknown_value=-1
         )
-        self._onehot_encoder = preprocessing.OrdinalEncoder
         encoder = pipeline.Pipeline(
             steps=[
                 ("simple_imputer", self._simple_imputer),
@@ -96,7 +98,7 @@ class OneHotEncoder(Encoder):
 
     def __init__(self, columns: List[str]):
         self._simple_imputer = impute.SimpleImputer(
-            strategy="constant", fill_value="", add_indicator=True
+            strategy="constant", fill_value=_MISSING
         )
         self._one_hot_encoder = preprocessing.OneHotEncoder(
             dtype=np.int32, handle_unknown="ignore"
@@ -109,9 +111,17 @@ class OneHotEncoder(Encoder):
         )
         super().__init__(encoder, columns)
 
+    def fit(self, ds: dataset.Dataset) -> None:
+        self.encoder.fit(ds.train[self.columns])
+        self.indicator_cols_ = []
+        cols = self.encoder["one_hot_encoder"].get_feature_names(self.columns)
+        self.preprocessed_cols_ = [
+            f"__{self._name}_preprocessed_{col}__" for col in cols
+        ]
+
 
 class NumericalEncoder(Encoder):
-    """Normalizes numerical columns to have zero mean and unit variance..
+    """Normalizes numerical columns to have zero mean and unit variance.
 
     Missing values are imputed to the mean and (optionally) an indicator colum is added
     per column with missing values.
@@ -155,11 +165,14 @@ class LabelEncoder:
         self.transform(ds)
 
 
-def _cols(encoder: type, encoders: Dict[type, Encoder]) -> Tuple[List[str], List[str]]:
+def _gather_cols(
+    encoders: List[type], type_to_encoder: Dict[type, Encoder]
+) -> Tuple[List[str], List[str]]:
     preprocessed_cols, indicator_cols = [], []
-    if encoder in encoders:
-        preprocessed_cols = encoders[encoder].preprocessed_cols_
-        indicator_cols = encoders[encoder].indicator_cols_
+    for encoder in encoders:
+        if encoder in type_to_encoder:
+            preprocessed_cols += type_to_encoder[encoder].preprocessed_cols_
+            indicator_cols += type_to_encoder[encoder].indicator_cols_
     return preprocessed_cols, indicator_cols
 
 
@@ -173,12 +186,11 @@ class LightGBMModel:
 
     def fit(self, ds: dataset.Dataset, encoders: Dict[type, Encoder]) -> None:
         self.feature_cols_, categorical_cols = [], []
-        cols, inds = _cols(NumericalEncoder, encoders)
-        self.feature_cols_ += cols
-        self.feature_cols_ += inds
+        cols, inds = _gather_cols([NumericalEncoder], encoders)
+        self.feature_cols_ += cols + inds
         categorical_cols += inds
 
-        cols, _ = _cols(CategoricalEncoder, encoders)
+        cols, _ = _gather_cols([CategoricalEncoder], encoders)
         self.feature_cols_ += cols
         categorical_cols += cols
 
@@ -213,14 +225,8 @@ class LinearSVCModel:
         self.feature_cols_ = None
 
     def fit(self, ds: dataset.Dataset, encoders: Dict[type, Encoder]) -> None:
-        self.feature_cols_ = []
-        cols, inds = _cols(NumericalEncoder, encoders)
-        self.feature_cols_ += cols
-        self.feature_cols_ += inds
-
-        cols, inds = _cols(OneHotEncoder, encoders)
-        self.feature_cols_ += cols
-        self.feature_cols_ += inds
+        cols, inds = _gather_cols([NumericalEncoder, OneHotEncoder], encoders)
+        self.feature_cols_ = cols + inds
 
         self.model_ = svm.LinearSVC(C=2 ** -7)
         self.model_.fit(ds.train[self.feature_cols_], ds.train[ds.label_col])
@@ -238,7 +244,7 @@ def train_model(
 ) -> Any:
     if model == "lgbm":
         model = LightGBMModel("binary", objective)
-    elif model == "svm":
+    elif model == "svc":
         model = LinearSVCModel()
     else:
         raise ValueError("Unknown model :: {model}.")
@@ -268,17 +274,16 @@ def automl_pipeline(ds: dataset.Dataset, objective: str = "auc") -> Any:
         encoder.fit_transform(ds)
         type_to_encoder[CategoricalEncoder] = encoder
 
-        # TODO(eugenhotaj): Fix.
-        # encoder = OneHotEncoder(columns=ds.categorical_cols)
-        # encoder.fit_transform(ds)
-        # type_to_encoder[OneHotEncoder] = encoder
+        encoder = OneHotEncoder(columns=ds.categorical_cols)
+        encoder.fit_transform(ds)
+        type_to_encoder[OneHotEncoder] = encoder
 
     # Preprocess label.
     LabelEncoder(column=ds.label_col).fit_transform(ds)
 
     # Train model.
     model = train_model(
-        ds=ds, encoders=type_to_encoder, model="lgbm", objective=objective
+        ds=ds, encoders=type_to_encoder, model="svc", objective=objective
     )
 
     return model
