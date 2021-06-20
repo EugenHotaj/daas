@@ -2,7 +2,8 @@
 
 Efficent AutoML system built on top of [ray](https://github.com/ray-project/ray).
 
-=======
+---
+
 Benchmark (OpenML):
 
 | Task | AUC OpenML | AUC Ours | Diff |
