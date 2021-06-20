@@ -1,5 +1,6 @@
 # Specific ignores for ray-automl.
 data/
+todo
 
 # Vim specific.
 *.un~

@@ -17,9 +17,7 @@ def one_fold(task_id: int, fold: int) -> Dict[str, float]:
     ds = openml_utils.dataset_from_task(task_id, fold, n_valid_folds=2)
     model = pipeline.automl_pipeline(ds, "auc")
     labels = ds.test[ds.label_col]
-    predictions = model.predict(
-        ds.test[ds.feature_cols], num_iteration=model.best_iteration
-    )
+    predictions = model.predict(ds.test[ds.feature_cols])
     metric = {
         "auc": metrics.roc_auc_score(labels, predictions),
         "pr_auc": metrics.average_precision_score(labels, predictions),
@@ -42,7 +40,7 @@ def print_result(task_id: int, task_name: str, results: Dict[str, float]):
     print(f"Results for task {task_id} [{task_name}]:")
     for key, value in results.items():
         mean, std = value
-        print(f"  {key}: {round(mean, 3)} +/- {round(std, 3)}")
+        print(f"  {key}: {round(mean, 4)} +/- {round(std, 4)}")
     print()
 
 

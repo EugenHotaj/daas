@@ -1,12 +1,14 @@
-from typing import List
+from typing import Any, List
 
-import lightgbm as lgb
+import lightgbm as lgbm
 import numpy as np
 import pandas as pd
+from sklearn import base
 from sklearn import impute
 from sklearn import metrics
-from sklearn import preprocessing
 from sklearn import pipeline
+from sklearn import preprocessing
+from sklearn import svm
 
 from automl import dataset
 
@@ -90,9 +92,49 @@ class LabelEncoder:
         self.transform(ds)
 
 
+class LightGBMClassifier(base.ClassifierMixin):
+    def __init__(self, model: lgbm.Booster):
+        self.model = booster
+
+    # TODO(eugenhotaj): Add type information.
+    def predict(self, X):
+        return self.model.predict(X, num_iteration=self.model.best_iteration)
+
+
+# TODO(eugenhotaj): model should not be a string but a search space.
+def train_model(ds: dataset.Dataset, model="lgbm", objective: str = "auc") -> Any:
+    if model == "lgbm":
+        # Train LightGBM.
+        train_data = lgbm.Dataset(
+            ds.train[ds.feature_cols],
+            label=ds.train[ds.label_col],
+            feature_name=ds.feature_cols,
+            categorical_feature=ds.categorical_cols,
+        )
+        valid_data = lgbm.Dataset(
+            ds.valid[ds.feature_cols],
+            label=ds.valid[ds.label_col],
+            reference=train_data,
+        )
+        params = {
+            "objective": "binary",
+            "metric": [objective],
+        }
+        model = lgbm.train(
+            params, train_data, 300, valid_sets=[valid_data], early_stopping_rounds=10
+        )
+        model = LightGBMClassifier(model)
+    elif model == "svm":
+        model = svm.LinearSVC()
+        model.fit(ds.train[ds.feature_cols], ds.train[ds.label_col])
+    else:
+        raise ValueError("Unknown model :: {model}.")
+    return model
+
+
 # TODO(eugenhotaj): The pipeline should not just return the model, but rather a
 # predictor which takes as input raw data and produces predictions.
-def automl_pipeline(ds: dataset.Dataset, objective: str = "auc") -> lgb.Booster:
+def automl_pipeline(ds: dataset.Dataset, objective: str = "auc") -> Any:
     """Entry point for the AutoML pipeline.
 
     Args:
@@ -106,23 +148,5 @@ def automl_pipeline(ds: dataset.Dataset, objective: str = "auc") -> lgb.Booster:
         CategoricalEncoder(columns=ds.categorical_cols).fit_transform(ds)
     # Preprocess label.
     LabelEncoder(column=ds.label_col).fit_transform(ds)
-
-    train_data = lgb.Dataset(
-        ds.train[ds.feature_cols],
-        label=ds.train[ds.label_col],
-        feature_name=ds.feature_cols,
-        categorical_feature=ds.categorical_cols,
-    )
-    valid_data = lgb.Dataset(
-        ds.valid[ds.feature_cols],
-        label=ds.valid[ds.label_col],
-        reference=train_data,
-    )
-    params = {
-        "objective": "binary",
-        "metric": [objective],
-    }
-    booster = lgb.train(
-        params, train_data, 300, valid_sets=[valid_data], early_stopping_rounds=10
-    )
-    return booster
+    model = train_model(ds=ds, model="lgbm", objective=objective)
+    return model
