@@ -1,6 +1,6 @@
 import argparse
 import collections
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import ray
@@ -45,14 +45,18 @@ def print_result(task_id: int, task_name: str, results: Dict[str, float]):
 
 
 def main(args):
-    ray.init(local_mode=args.local_mode)
-    futures = {k: run_on_task.remote(v) for k, v in BENCHMARK_TASKS.items()}
+    ray.init(local_mode=args.local)
+    if args.dataset is None:
+        futures = {k: run_on_task.remote(v) for k, v in BENCHMARK_TASKS.items()}
+    else:
+        futures = {args.dataset: run_on_task.remote(BENCHMARK_TASKS[args.dataset])}
     for task_name, result in zip(futures.keys(), ray.get(list(futures.values()))):
         print_result(BENCHMARK_TASKS[task_name], task_name, result)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--local-mode", action="store_true", default=False)
+    parser.add_argument("--local", action="store_true", default=False)
+    parser.add_argument("--dataset", choices=BENCHMARK_TASKS.keys(), default=None)
     args = parser.parse_args()
     main(args)
