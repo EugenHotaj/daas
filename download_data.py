@@ -21,6 +21,7 @@ def download_openml_tasks(task_ids: List[int]):
         df, _, categorical, columns = dataset.get_data()
         label_col = dataset.default_target_attribute
         feature_cols = [col for col in columns if col != label_col]
+        numerical_cols = [col for ind, col in zip(categorical, feature_cols) if not ind]
         categorical_cols = [col for ind, col in zip(categorical, feature_cols) if ind]
 
         df[FOLD_COL] = -1
@@ -32,7 +33,7 @@ def download_openml_tasks(task_ids: List[int]):
         out_path = openml_utils.task_path(task.task_id)
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         task = openml_utils.OpenMLTask(
-            df, feature_cols, categorical_cols, label_col, FOLD_COL
+            df, feature_cols, numerical_cols, categorical_cols, label_col, FOLD_COL
         )
         task.dump(out_path)
 

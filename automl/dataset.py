@@ -10,5 +10,6 @@ class Dataset:
     valid: pd.DataFrame
     test: pd.DataFrame
     feature_cols: List[str]
+    numerical_cols: List[str]
     categorical_cols: List[str]
     label_col: str

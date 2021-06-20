@@ -18,6 +18,7 @@ class OpenMLTask:
 
     df: pd.DataFrame
     feature_cols: List[str]
+    numerical_cols: List[str]
     categorical_cols: List[str]
     label_col: str
     fold_col: str
@@ -84,6 +85,7 @@ def dataset_from_task(
         valid=valid[all_cols].copy(),
         test=test[all_cols].copy(),
         feature_cols=task.feature_cols,
+        numerical_cols=task.numerical_cols,
         categorical_cols=task.categorical_cols,
         label_col=task.label_col,
     )
