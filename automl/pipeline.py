@@ -293,68 +293,68 @@ class LightGBMModel:
             )
 
 
-class LinearSVCModel:
-    def __init__(self) -> None:
-        self.prediction_col = f"__{self.__class__.__name__}_predictions__"
-        self.model_ = None
-        self.feature_cols_ = None
-
-    def fit(self, ds: dataset.Dataset, encoders: Dict[type, Encoder]) -> None:
-        cols, inds = _gather_cols([NumericalEncoder, OneHotEncoder], encoders)
-        self.feature_cols_ = cols + inds
-
-        self.model_ = linear_model.LogisticRegression(C=1.0, max_iter=1000)
-        self.model_.fit(ds.train[self.feature_cols_], ds.train[ds.label_col])
-
-    def predict(self, ds: dataset.Dataset) -> None:
-        for split in ("train", "valid", "test"):
-            split = getattr(ds, split)
-            split[self.prediction_col] = self.model_.predict_proba(
-                split[self.feature_cols_]
-            )[:, 1]
-
-
-class GreedySystemCombination:
-    def __init__(self) -> None:
-        self.prediction_col = f"__{self.__class__.__name__}_predictions__"
-
-        self.feature_cols_ = None
-        self.col_to_weights_ = None
-
-    def fit(self, ds: dataset.Dataset, models: List[Any]) -> None:
-        self.feature_cols_ = [model.prediction_col for model in models]
-        self.col_to_weights_ = []
-        split, labels = ds.valid, ds.valid[ds.label_col]
-
-        scores = [self._score(split, [(col, 1.0, 0.0)]) for col in self.feature_cols_]
-        scores = [metrics.average_precision_score(labels, score) for score in scores]
-        best_score = np.max(scores)
-        best_weights = (self.feature_cols_[np.argmax(scores)], 1.0, 0.0)
-        while best_weights is not None:
-            self.col_to_weights_.append(best_weights)
-            best_weights = None
-            for col in self.feature_cols_:
-                for ew in np.arange(0.1, 1.1, 0.1):
-                    for lw in np.arange(0.0, 1.1, 0.1):
-                        col_to_weights = self.col_to_weights_ + [(col, ew, lw)]
-                        preds = self._score(split, col_to_weights)
-                        score = metrics.average_precision_score(labels, preds)
-                        if score - best_score >= 0.0005:
-                            best_score, best_weights = score, (col, ew, lw)
-        print(f"Ensemble :: {self.col_to_weights_}")
-
-    def _score(
-        self, split: pd.DataFrame, col_to_weights: List[Tuple[str, float]]
-    ) -> float:
-        preds = np.zeros((split[self.feature_cols_].values.shape[0],))
-        for col, ew, lw in col_to_weights:
-            preds += ew * split[col].values + lw
-        return preds
-
-    def predict(self, ds: dataset.Dataset) -> None:
-        for split in ("train", "valid", "test"):
-            split = getattr(ds, split)
-            split[self.prediction_col] = self._score(split, self.col_to_weights_)
+# class LogisticRegressionModel:
+#     def __init__(self) -> None:
+#         self.prediction_col = f"__{self.__class__.__name__}_predictions__"
+#         self.model_ = None
+#         self.feature_cols_ = None
+#
+#     def fit(self, ds: dataset.Dataset, encoders: Dict[type, Encoder]) -> None:
+#         cols, inds = _gather_cols([NumericalEncoder, OneHotEncoder], encoders)
+#         self.feature_cols_ = cols + inds
+#
+#         self.model_ = linear_model.LogisticRegression(C=1.0, max_iter=1000)
+#         self.model_.fit(ds.train[self.feature_cols_], ds.train[ds.label_col])
+#
+#     def predict(self, ds: dataset.Dataset) -> None:
+#         for split in ("train", "valid", "test"):
+#             split = getattr(ds, split)
+#             split[self.prediction_col] = self.model_.predict_proba(
+#                 split[self.feature_cols_]
+#             )[:, 1]
+#
+#
+# class GreedySystemCombination:
+#     def __init__(self) -> None:
+#         self.prediction_col = f"__{self.__class__.__name__}_predictions__"
+#
+#         self.feature_cols_ = None
+#         self.col_to_weights_ = None
+#
+#     def fit(self, ds: dataset.Dataset, models: List[Any]) -> None:
+#         self.feature_cols_ = [model.prediction_col for model in models]
+#         self.col_to_weights_ = []
+#         split, labels = ds.valid, ds.valid[ds.label_col]
+#
+#         scores = [self._score(split, [(col, 1.0, 0.0)]) for col in self.feature_cols_]
+#         scores = [metrics.average_precision_score(labels, score) for score in scores]
+#         best_score = np.max(scores)
+#         best_weights = (self.feature_cols_[np.argmax(scores)], 1.0, 0.0)
+#         while best_weights is not None:
+#             self.col_to_weights_.append(best_weights)
+#             best_weights = None
+#             for col in self.feature_cols_:
+#                 for ew in np.arange(0.1, 1.1, 0.1):
+#                     for lw in np.arange(0.0, 1.1, 0.1):
+#                         col_to_weights = self.col_to_weights_ + [(col, ew, lw)]
+#                         preds = self._score(split, col_to_weights)
+#                         score = metrics.average_precision_score(labels, preds)
+#                         if score - best_score >= 0.0005:
+#                             best_score, best_weights = score, (col, ew, lw)
+#         print(f"Ensemble :: {self.col_to_weights_}")
+#
+#     def _score(
+#         self, split: pd.DataFrame, col_to_weights: List[Tuple[str, float]]
+#     ) -> float:
+#         preds = np.zeros((split[self.feature_cols_].values.shape[0],))
+#         for col, ew, lw in col_to_weights:
+#             preds += ew * split[col].values + lw
+#         return preds
+#
+#     def predict(self, ds: dataset.Dataset) -> None:
+#         for split in ("train", "valid", "test"):
+#             split = getattr(ds, split)
+#             split[self.prediction_col] = self._score(split, self.col_to_weights_)
 
 
 # TODO(eugenhotaj): The pipeline should not just return the model, but rather a
