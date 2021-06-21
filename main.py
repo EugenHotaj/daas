@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import ray
-from sklearn import metrics
+from sklearn import metrics as sklearn_metrics
 
 from automl import dataset
 from automl import openml_utils
@@ -13,36 +13,56 @@ from download_data import BENCHMARK_TASKS
 
 
 @ray.remote
-def one_fold(task_id: int, fold: int) -> Dict[str, float]:
+def one_fold(task_id: int, fold: int) -> Dict[str, Dict[str, float]]:
     ds = openml_utils.dataset_from_task(task_id, fold, n_valid_folds=2)
     model = pipeline.automl_pipeline(ds, "auc")
     model.predict(ds)
-    predictions = ds.test[model.prediction_col]
-    labels = ds.test[ds.label_col]
-    metric = {
-        "auc": metrics.roc_auc_score(labels, predictions),
-        "pr_auc": metrics.average_precision_score(labels, predictions),
-        "accuracy": metrics.accuracy_score(labels, np.where(predictions >= 0.5, 1, 0)),
-    }
-    return metric
+    metrics = {}
+    for split in ("train", "valid", "test"):
+        predictions = ds.test[model.prediction_col]
+        labels = ds.test[ds.label_col]
+        metric = {
+            "auc": sklearn_metrics.roc_auc_score(labels, predictions),
+            "pr_auc": sklearn_metrics.average_precision_score(labels, predictions),
+            "accuracy": sklearn_metrics.accuracy_score(
+                labels, np.where(predictions >= 0.5, 1, 0)
+            ),
+        }
+        metrics[split] = metric
+    return metrics
+
+
+TMetrics = Dict[str, Dict[str, Tuple[float, float]]]
 
 
 @ray.remote
-def run_on_task(task_id: int) -> Dict[str, Tuple[float, float]]:
+def run_on_task(task_id: int) -> TMetrics:
     futures = [one_fold.remote(task_id, i) for i in range(10)]
-    metric = collections.defaultdict(list)
+    metrics = collections.defaultdict(lambda: collections.defaultdict(list))
     for fold in ray.get(futures):
-        for key, value in fold.items():
-            metric[key].append(value)
-    return {key: (np.mean(value), np.std(value)) for key, value in metric.items()}
+        for split, split_metrics in fold.items():
+            for metric, value in split_metrics.items():
+                metrics[split][metric].append(value)
+    for split, split_metrics in metrics.items():
+        metrics[split] = {
+            key: (np.mean(value), np.std(value)) for key, value in split_metrics.items()
+        }
+    return dict(metrics)
 
 
-def print_result(task_id: int, task_name: str, results: Dict[str, float]):
-    print(f"Results for task {task_id} [{task_name}]:")
-    for key, value in results.items():
-        mean, std = value
-        print(f"  {key}: {round(mean, 4)} +/- {round(std, 4)}")
-    print()
+def print_metrics(task_id: int, task_name: str, metrics: TMetrics) -> None:
+    print(f"Metrics for task {task_id} [{task_name}]:")
+    metric_to_split = collections.defaultdict(dict)
+    for split, split_metrics in metrics.items():
+        for metric, value in split_metrics.items():
+            mean, std = value
+            metric_to_split[metric][split] = (mean, mean - std, mean + std)
+    for metric, split in metric_to_split.items():
+        out = f"  {metric}: "
+        for split, values in split.items():
+            mean, lo, hi = values
+            out += f"{round(mean, 4)} ({round(lo, 4)} {round(hi, 4)}) [{split}]   "
+        print(out)
 
 
 def main(args):
@@ -52,7 +72,7 @@ def main(args):
     else:
         futures = {args.dataset: run_on_task.remote(BENCHMARK_TASKS[args.dataset])}
     for task_name, result in zip(futures.keys(), ray.get(list(futures.values()))):
-        print_result(BENCHMARK_TASKS[task_name], task_name, result)
+        print_metrics(BENCHMARK_TASKS[task_name], task_name, result)
 
 
 if __name__ == "__main__":
