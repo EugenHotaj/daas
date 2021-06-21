@@ -1,14 +1,15 @@
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
+import autofeat
 import lightgbm as lgbm
 import numpy as np
 import pandas as pd
 import scipy
 from sklearn import impute
 from sklearn import linear_model
+from sklearn import metrics
 from sklearn import pipeline
 from sklearn import preprocessing
-from sklearn import svm
 
 from automl import dataset
 
@@ -79,7 +80,7 @@ class CategoricalEncoder(Encoder):
             strategy="constant", fill_value=_MISSING
         )
         self._ordinal_encoder = preprocessing.OrdinalEncoder(
-            dtype=np.int32, handle_unknown="use_encoded_value", unknown_value=-1
+            handle_unknown="use_encoded_value", unknown_value=np.nan
         )
         encoder = pipeline.Pipeline(
             steps=[
@@ -129,15 +130,33 @@ class NumericalEncoder(Encoder):
     """
 
     def __init__(self, columns: List[str]):
-        self._simple_imputer = impute.SimpleImputer(strategy="mean", add_indicator=True)
-        self._standard_scaler = preprocessing.StandardScaler()
+        self._simple_imputer = impute.SimpleImputer(
+            strategy="constant", fill_value=0.0, add_indicator=True
+        )
+        self._autofeat = autofeat.AutoFeatLight(
+            compute_ratio=len(columns) ** 2 < 1000, compute_product=False, scale=True
+        )
+        old_fn = self._autofeat.fit
+        self._autofeat.fit = lambda X, *arg, **kwargs: old_fn(X)
         encoder = pipeline.Pipeline(
             steps=[
                 ("simple_imputer", self._simple_imputer),
-                ("standard_scaler", self._standard_scaler),
+                ("autofeat", self._autofeat),
             ]
         )
         super().__init__(encoder, columns)
+
+    def fit(self, ds: dataset.Dataset) -> None:
+        self.encoder.fit(ds.train[self.columns])
+        autofeat = self.encoder["autofeat"]
+        self.preprocessed_cols_ = [
+            f"__{self._name}_preprocessed_{col}__" for col in autofeat.features_
+        ]
+        indicator = self.encoder["simple_imputer"].indicator_
+        n_indicator_cols = indicator.features_.shape[0] if indicator else 0
+        self.indicator_cols_ = [
+            f"__{self._name}_indicator_{i}__" for i in range(n_indicator_cols)
+        ]
 
 
 # TODO(eugenhotaj): LabelEncoder should not overwrite the raw label.
@@ -186,8 +205,44 @@ class LightGBMModel:
         self.model_ = None
         self.feature_cols_ = None
 
-    def fit(self, ds: dataset.Dataset, encoders: Dict[type, Encoder]) -> None:
+    def _make_dataset(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        feature_cols: Optional[List[str]] = None,
+        categorical_cols: Optional[List[str]] = None,
+        reference: Optional[lgbm.Dataset] = None,
+    ):
+        return lgbm.Dataset(
+            X,
+            label=y,
+            feature_name=feature_cols,
+            categorical_feature=categorical_cols,
+            reference=reference,
+        )
+
+    def _train(
+        self,
+        params: Dict[str, Any],
+        train_data: lgbm.Dataset,
+        n_rounds,
+        valid_sets: Optional[List[lgbm.Dataset]] = None,
+        early_stopping_rounds: Optional[int] = None,
+    ):
+        return lgbm.train(
+            params,
+            train_data,
+            n_rounds,
+            valid_sets=valid_sets,
+            early_stopping_rounds=early_stopping_rounds,
+        )
+
+    def fit(
+        self, ds: dataset.Dataset, encoders: Dict[type, Encoder], extra_cols=None
+    ) -> None:
+        extra_cols = extra_cols or []
         self.feature_cols_, categorical_cols = [], []
+        self.feature_cols_ += extra_cols
         cols, inds = _gather_cols([NumericalEncoder], encoders)
         self.feature_cols_ += cols + inds
         categorical_cols += inds
@@ -196,11 +251,12 @@ class LightGBMModel:
         self.feature_cols_ += cols
         categorical_cols += cols
 
-        train_data = lgbm.Dataset(
+        # Early stopping.
+        train_data = self._make_dataset(
             ds.train[self.feature_cols_],
-            label=ds.train[ds.label_col],
-            feature_name=self.feature_cols_,
-            categorical_feature=categorical_cols,
+            ds.train[ds.label_col],
+            self.feature_cols_,
+            categorical_cols,
         )
         valid_data = lgbm.Dataset(
             ds.valid[self.feature_cols_],
@@ -211,9 +267,23 @@ class LightGBMModel:
             "objective": self.objective,
             "metric": [self.metric],
         }
-        self.model_ = lgbm.train(
-            params, train_data, 300, valid_sets=[valid_data], early_stopping_rounds=10
+        model = lgbm.train(
+            params, train_data, 1000, valid_sets=[valid_data], early_stopping_rounds=100
         )
+
+        # Full dataset.
+        train_data = self._make_dataset(
+            np.concatenate(
+                (ds.train[self.feature_cols_], ds.valid[self.feature_cols_]), axis=0
+            ),
+            np.concatenate((ds.train[ds.label_col], ds.valid[ds.label_col]), axis=0),
+            self.feature_cols_,
+            categorical_cols,
+        )
+        params = {
+            "objective": self.objective,
+        }
+        self.model_ = lgbm.train(params, train_data, model.best_iteration)
 
     def predict(self, ds: dataset.Dataset) -> None:
         for split in ("train", "valid", "test"):
@@ -227,36 +297,73 @@ class LinearSVCModel:
     def __init__(self) -> None:
         self.prediction_col = f"__{self.__class__.__name__}_predictions__"
         self.model_ = None
-        self.scaler_ = None
         self.feature_cols_ = None
 
     def fit(self, ds: dataset.Dataset, encoders: Dict[type, Encoder]) -> None:
         cols, inds = _gather_cols([NumericalEncoder, OneHotEncoder], encoders)
         self.feature_cols_ = cols + inds
 
-        self.model_ = svm.LinearSVC(C=2 ** -7)
+        self.model_ = linear_model.LogisticRegression(C=1.0, max_iter=1000)
         self.model_.fit(ds.train[self.feature_cols_], ds.train[ds.label_col])
-
-        # Platt scaling.
-        self.scaler_ = linear_model.LogisticRegression(C=16.0)
-        X = self.model_.decision_function(ds.valid[self.feature_cols_]).reshape(-1, 1)
-        self.scaler_.fit(X, ds.valid[ds.label_col])
 
     def predict(self, ds: dataset.Dataset) -> None:
         for split in ("train", "valid", "test"):
             split = getattr(ds, split)
-            X = self.model_.decision_function(split[self.feature_cols_]).reshape(-1, 1)
-            split[self.prediction_col] = self.scaler_.predict_proba(X)[:, 1]
+            split[self.prediction_col] = self.model_.predict_proba(
+                split[self.feature_cols_]
+            )[:, 1]
+
+
+class GreedySystemCombination:
+    def __init__(self) -> None:
+        self.prediction_col = f"__{self.__class__.__name__}_predictions__"
+
+        self.feature_cols_ = None
+        self.col_to_weights_ = None
+
+    def fit(self, ds: dataset.Dataset, models: List[Any]) -> None:
+        self.feature_cols_ = [model.prediction_col for model in models]
+        self.col_to_weights_ = []
+        split, labels = ds.valid, ds.valid[ds.label_col]
+
+        scores = [self._score(split, [(col, 1.0, 0.0)]) for col in self.feature_cols_]
+        scores = [metrics.average_precision_score(labels, score) for score in scores]
+        best_score = np.max(scores)
+        best_weights = (self.feature_cols_[np.argmax(scores)], 1.0, 0.0)
+        while best_weights is not None:
+            self.col_to_weights_.append(best_weights)
+            best_weights = None
+            for col in self.feature_cols_:
+                for ew in np.arange(0.1, 1.1, 0.1):
+                    for lw in np.arange(0.0, 1.1, 0.1):
+                        col_to_weights = self.col_to_weights_ + [(col, ew, lw)]
+                        preds = self._score(split, col_to_weights)
+                        score = metrics.average_precision_score(labels, preds)
+                        if score - best_score >= 0.0005:
+                            best_score, best_weights = score, (col, ew, lw)
+        print(f"Ensemble :: {self.col_to_weights_}")
+
+    def _score(
+        self, split: pd.DataFrame, col_to_weights: List[Tuple[str, float]]
+    ) -> float:
+        preds = np.zeros((split[self.feature_cols_].values.shape[0],))
+        for col, ew, lw in col_to_weights:
+            preds += ew * split[col].values + lw
+        return preds
+
+    def predict(self, ds: dataset.Dataset) -> None:
+        for split in ("train", "valid", "test"):
+            split = getattr(ds, split)
+            split[self.prediction_col] = self._score(split, self.col_to_weights_)
 
 
 # TODO(eugenhotaj): The pipeline should not just return the model, but rather a
 # predictor which takes as input raw data and produces predictions.
-def automl_pipeline(ds: dataset.Dataset, objective: str = "auc") -> Any:
+def automl_pipeline(ds: dataset.Dataset) -> Any:
     """Entry point for the AutoML pipeline.
 
     Args:
         ds: The Dataset to use for training and evaluating the AutoML pipeline.
-        objective: The main metric to optimize. Does not need to be differentiable.
     Returns:
         The best model found.
     """
@@ -279,9 +386,9 @@ def automl_pipeline(ds: dataset.Dataset, objective: str = "auc") -> Any:
     LabelEncoder(column=ds.label_col).fit_transform(ds)
 
     # Train models.
-    models = [LightGBMModel("binary", objective), LinearSVCModel()]
+    models = [LightGBMModel("binary", "auc")]
     for model in models:
         model.fit(ds, type_to_encoder)
         model.predict(ds)
-
-    return model[0]
+        return model
+    return model

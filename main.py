@@ -15,12 +15,13 @@ from download_data import BENCHMARK_TASKS
 @ray.remote
 def one_fold(task_id: int, fold: int) -> Dict[str, Dict[str, float]]:
     ds = openml_utils.dataset_from_task(task_id, fold, n_valid_folds=2)
-    model = pipeline.automl_pipeline(ds, "auc")
+    model = pipeline.automl_pipeline(ds)
     model.predict(ds)
     metrics = {}
     for split in ("train", "valid", "test"):
-        predictions = ds.test[model.prediction_col]
-        labels = ds.test[ds.label_col]
+        df = getattr(ds, split)
+        predictions = df[model.prediction_col]
+        labels = df[ds.label_col]
         metric = {
             "auc": sklearn_metrics.roc_auc_score(labels, predictions),
             "pr_auc": sklearn_metrics.average_precision_score(labels, predictions),
@@ -58,11 +59,11 @@ def print_metrics(task_id: int, task_name: str, metrics: TMetrics) -> None:
             mean, std = value
             metric_to_split[metric][split] = (mean, mean - std, mean + std)
     for metric, split in metric_to_split.items():
-        out = f"  {metric}: "
+        print(f"  {metric}: ")
         for split, values in split.items():
             mean, lo, hi = values
-            out += f"{round(mean, 4)} ({round(lo, 4)} {round(hi, 4)}) [{split}]   "
-        print(out)
+            print(f"    {split}: {round(mean, 4)} ({round(lo, 4)} {round(hi, 4)})")
+    print()
 
 
 def main(args):
