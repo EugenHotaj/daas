@@ -1,13 +1,10 @@
 from typing import Any, Dict, List, Optional, Tuple
 
-import autofeat
 import lightgbm as lgbm
 import numpy as np
 import pandas as pd
 import scipy
 from sklearn import impute
-from sklearn import linear_model
-from sklearn import metrics
 from sklearn import pipeline
 from sklearn import preprocessing
 
@@ -16,6 +13,8 @@ from automl import dataset
 _MISSING = "__missing_value__"
 
 
+# TODO(ehotaj): The distinction between Encoder/Model is pretty flimsy. Consider just
+# having one Transform base class for everything.
 class Encoder:
     """Base class for all encoders in the AutoML pipeline."""
 
@@ -37,35 +36,35 @@ class Encoder:
         self.preprocessed_cols_ = None
         self.indicator_cols_ = None
 
-    def fit(self, ds: dataset.Dataset) -> None:
-        self.encoder.fit(ds.train[self.columns])
+    @property
+    def _indicator(self):
+        # TODO(eugenhotaj): We're assuming the child class creates an imputer/indicator.
+        return self.encoder["simple_imputer"].indicator_
+
+    def fit(self, df: pd.DataFrame) -> None:
+        self.encoder.fit(df[self.columns])
         self.preprocessed_cols_ = [
             f"__{self._name}_preprocessed_{col}__" for col in self.columns
         ]
-        # TODO(eugenhotaj): This is pretty bad. We're assuming the child class creates
-        # an imputer.
-        indicator = self.encoder["simple_imputer"].indicator_
-        n_indicator_cols = indicator.features_.shape[0] if indicator else 0
+        n_indicator_cols = self._indicator.features_.shape[0] if self._indicator else 0
         self.indicator_cols_ = [
             f"__{self._name}_indicator_{i}__" for i in range(n_indicator_cols)
         ]
 
-    def transform(self, ds: dataset.Dataset) -> None:
-        for split in ("train", "valid", "test"):
-            split = getattr(ds, split)
-            encoded, indicator = self.encoder.transform(split[self.columns]), None
-            # TODO(ehotaj): It's much more efficient to work with sparse matricies.
-            if scipy.sparse.issparse(encoded):
-                encoded = encoded.todense()
-            if self.indicator_cols_:
-                encoded = encoded[:, : -len(self.indicator_cols_)]
-                indicator = encoded[:, -len(self.indicator_cols_) :]
-                split[self.indicator_cols_] = indicator
-            split[self.preprocessed_cols_] = encoded
+    def transform(self, df: pd.DataFrame) -> None:
+        encoded, indicator = self.encoder.transform(df[self.columns]), None
+        # TODO(ehotaj): It's much more efficient to work with sparse matricies.
+        if scipy.sparse.issparse(encoded):
+            encoded = encoded.todense()
+        if self.indicator_cols_:
+            encoded = encoded[:, : -len(self.indicator_cols_)]
+            indicator = encoded[:, -len(self.indicator_cols_) :]
+            df[self.indicator_cols_] = indicator
+        df[self.preprocessed_cols_] = encoded
 
-    def fit_transform(self, ds: dataset.Dataset) -> None:
-        self.fit(ds)
-        self.transform(ds)
+    def fit_transform(self, df: pdf.DataFrame) -> None:
+        self.fit(df)
+        self.transform(df)
 
 
 class CategoricalEncoder(Encoder):
@@ -91,37 +90,6 @@ class CategoricalEncoder(Encoder):
         super().__init__(encoder, columns)
 
 
-class OneHotEncoder(Encoder):
-    """Encodes arbitrary categorical variables into one-hot numeric arrays.
-
-    Missing values are imputed to the empty string and (optionally) an indicator colum
-    is added per column with missing values.
-    """
-
-    def __init__(self, columns: List[str]):
-        self._simple_imputer = impute.SimpleImputer(
-            strategy="constant", fill_value=_MISSING
-        )
-        self._one_hot_encoder = preprocessing.OneHotEncoder(
-            dtype=np.int32, handle_unknown="ignore"
-        )
-        encoder = pipeline.Pipeline(
-            steps=[
-                ("simple_imputer", self._simple_imputer),
-                ("one_hot_encoder", self._one_hot_encoder),
-            ]
-        )
-        super().__init__(encoder, columns)
-
-    def fit(self, ds: dataset.Dataset) -> None:
-        self.encoder.fit(ds.train[self.columns])
-        self.indicator_cols_ = []
-        cols = self.encoder["one_hot_encoder"].get_feature_names(self.columns)
-        self.preprocessed_cols_ = [
-            f"__{self._name}_preprocessed_{col}__" for col in cols
-        ]
-
-
 class NumericalEncoder(Encoder):
     """Normalizes numerical columns to have zero mean and unit variance.
 
@@ -130,37 +98,19 @@ class NumericalEncoder(Encoder):
     """
 
     def __init__(self, columns: List[str]):
-        self._simple_imputer = impute.SimpleImputer(
-            strategy="constant", fill_value=0.0, add_indicator=True
-        )
-        self._autofeat = autofeat.AutoFeatLight(
-            compute_ratio=len(columns) ** 2 < 1000, compute_product=False, scale=True
-        )
-        old_fn = self._autofeat.fit
-        self._autofeat.fit = lambda X, *arg, **kwargs: old_fn(X)
+        self._simple_imputer = impute.SimpleImputer(strategy="mean", add_indicator=True)
+        self._standard_scaler = preprocessing.StandardScaler()
         encoder = pipeline.Pipeline(
             steps=[
                 ("simple_imputer", self._simple_imputer),
-                ("autofeat", self._autofeat),
+                ("standard_scaler", self._standard_scaler),
             ]
         )
         super().__init__(encoder, columns)
 
-    def fit(self, ds: dataset.Dataset) -> None:
-        self.encoder.fit(ds.train[self.columns])
-        autofeat = self.encoder["autofeat"]
-        self.preprocessed_cols_ = [
-            f"__{self._name}_preprocessed_{col}__" for col in autofeat.features_
-        ]
-        indicator = self.encoder["simple_imputer"].indicator_
-        n_indicator_cols = indicator.features_.shape[0] if indicator else 0
-        self.indicator_cols_ = [
-            f"__{self._name}_indicator_{i}__" for i in range(n_indicator_cols)
-        ]
-
 
 # TODO(eugenhotaj): LabelEncoder should not overwrite the raw label.
-class LabelEncoder:
+class LabelEncoder(Encoder):
     """Encodes a label colum into ints."""
 
     def __init__(self, column: str):
@@ -169,20 +119,17 @@ class LabelEncoder:
         Args:
             column: The label column to encode.
         """
-        self.column = column
-        self.encoder = preprocessing.LabelEncoder()
+        self._label_encoder = preprocessing.LabelEncoder()
+        self.encoder = pipeline.Pipeline(
+            steps=[
+                ("label_encoder", preprocessing.LabelEncoder()),
+            ]
+        )
+        super().__init__(encoder, [column])
 
-    def fit(self, ds: dataset.Dataset):
-        self.encoder.fit(ds.train[self.column])
-
-    def transform(self, ds: dataset.Dataset):
-        for split in ("train", "valid", "test"):
-            split = getattr(ds, split)
-            split[self.column] = self.encoder.transform(split[self.column])
-
-    def fit_transform(self, ds: dataset.Dataset):
-        self.fit(ds)
-        self.transform(ds)
+    @property
+    def _indicator(self):
+        return None
 
 
 def _gather_cols(
@@ -197,164 +144,49 @@ def _gather_cols(
 
 
 class LightGBMModel:
-    def __init__(self, objective: str, metric: str):
+    def __init__(
+        self, objective: str, metric: str, feature_columns: List[str], label_column: str
+    ):
         self.objective = objective
         self.metric = metric
-        self.prediction_col = f"__{self.__class__.__name__}_predictions__"
+        self.feature_columns = feature_columns
+        self.label_column = label_column
+        self.prediction_column = f"__{self.__class__.__name__}_predictions__"
 
         self.model_ = None
-        self.feature_cols_ = None
 
-    def _make_dataset(
-        self,
-        X: np.ndarray,
-        y: np.ndarray,
-        feature_cols: Optional[List[str]] = None,
-        categorical_cols: Optional[List[str]] = None,
-        reference: Optional[lgbm.Dataset] = None,
-    ):
+    def _make_dataset(self, df: pd.DataFrame, reference: Optional[lgbm.Dataset] = None):
+        # TODO(ehotaj): Should we explicitly specify categorical_feature here?
         return lgbm.Dataset(
-            X,
-            label=y,
-            feature_name=feature_cols,
-            categorical_feature=categorical_cols,
+            df[self.feature_columns],
+            label=df[self.label_column],
+            feature_name=self.feature_columns,
             reference=reference,
         )
 
-    def _train(
-        self,
-        params: Dict[str, Any],
-        train_data: lgbm.Dataset,
-        n_rounds,
-        valid_sets: Optional[List[lgbm.Dataset]] = None,
-        early_stopping_rounds: Optional[int] = None,
-    ):
-        return lgbm.train(
-            params,
-            train_data,
-            n_rounds,
-            valid_sets=valid_sets,
-            early_stopping_rounds=early_stopping_rounds,
-        )
-
-    def fit(
-        self, ds: dataset.Dataset, encoders: Dict[type, Encoder], extra_cols=None
-    ) -> None:
-        extra_cols = extra_cols or []
-        self.feature_cols_, categorical_cols = [], []
-        self.feature_cols_ += extra_cols
-        cols, inds = _gather_cols([NumericalEncoder], encoders)
-        self.feature_cols_ += cols + inds
-        categorical_cols += inds
-
-        cols, _ = _gather_cols([CategoricalEncoder], encoders)
-        self.feature_cols_ += cols
-        categorical_cols += cols
-
+    def fit(self, train_df: pd.DataFrame, valid_df: pd.DataFrame) -> None:
         # Early stopping.
-        train_data = self._make_dataset(
-            ds.train[self.feature_cols_],
-            ds.train[ds.label_col],
-            self.feature_cols_,
-            categorical_cols,
-        )
-        valid_data = lgbm.Dataset(
-            ds.valid[self.feature_cols_],
-            label=ds.valid[ds.label_col],
-            reference=train_data,
-        )
+        train_data = self._make_dataset(train_df)
+        valid_data = self._make_dataset(valid_df, reference=train_data)
         params = {
             "objective": self.objective,
             "metric": [self.metric],
         }
         model = lgbm.train(
-            params, train_data, 1000, valid_sets=[valid_data], early_stopping_rounds=100
+            params, train_data, 500, valid_sets=[valid_data], early_stopping_rounds=50
         )
 
         # Full dataset.
-        train_data = self._make_dataset(
-            np.concatenate(
-                (ds.train[self.feature_cols_], ds.valid[self.feature_cols_]), axis=0
-            ),
-            np.concatenate((ds.train[ds.label_col], ds.valid[ds.label_col]), axis=0),
-            self.feature_cols_,
-            categorical_cols,
-        )
+        train_data = self._make_dataset(pd.concat([train_df, valid_df])
         params = {
             "objective": self.objective,
         }
         self.model_ = lgbm.train(params, train_data, model.best_iteration)
 
-    def predict(self, ds: dataset.Dataset) -> None:
-        for split in ("train", "valid", "test"):
-            split = getattr(ds, split)
-            split[self.prediction_col] = self.model_.predict(
-                split[self.feature_cols_], num_iteration=self.model_.best_iteration
-            )
-
-
-# class LogisticRegressionModel:
-#     def __init__(self) -> None:
-#         self.prediction_col = f"__{self.__class__.__name__}_predictions__"
-#         self.model_ = None
-#         self.feature_cols_ = None
-#
-#     def fit(self, ds: dataset.Dataset, encoders: Dict[type, Encoder]) -> None:
-#         cols, inds = _gather_cols([NumericalEncoder, OneHotEncoder], encoders)
-#         self.feature_cols_ = cols + inds
-#
-#         self.model_ = linear_model.LogisticRegression(C=1.0, max_iter=1000)
-#         self.model_.fit(ds.train[self.feature_cols_], ds.train[ds.label_col])
-#
-#     def predict(self, ds: dataset.Dataset) -> None:
-#         for split in ("train", "valid", "test"):
-#             split = getattr(ds, split)
-#             split[self.prediction_col] = self.model_.predict_proba(
-#                 split[self.feature_cols_]
-#             )[:, 1]
-#
-#
-# class GreedySystemCombination:
-#     def __init__(self) -> None:
-#         self.prediction_col = f"__{self.__class__.__name__}_predictions__"
-#
-#         self.feature_cols_ = None
-#         self.col_to_weights_ = None
-#
-#     def fit(self, ds: dataset.Dataset, models: List[Any]) -> None:
-#         self.feature_cols_ = [model.prediction_col for model in models]
-#         self.col_to_weights_ = []
-#         split, labels = ds.valid, ds.valid[ds.label_col]
-#
-#         scores = [self._score(split, [(col, 1.0, 0.0)]) for col in self.feature_cols_]
-#         scores = [metrics.average_precision_score(labels, score) for score in scores]
-#         best_score = np.max(scores)
-#         best_weights = (self.feature_cols_[np.argmax(scores)], 1.0, 0.0)
-#         while best_weights is not None:
-#             self.col_to_weights_.append(best_weights)
-#             best_weights = None
-#             for col in self.feature_cols_:
-#                 for ew in np.arange(0.1, 1.1, 0.1):
-#                     for lw in np.arange(0.0, 1.1, 0.1):
-#                         col_to_weights = self.col_to_weights_ + [(col, ew, lw)]
-#                         preds = self._score(split, col_to_weights)
-#                         score = metrics.average_precision_score(labels, preds)
-#                         if score - best_score >= 0.0005:
-#                             best_score, best_weights = score, (col, ew, lw)
-#         print(f"Ensemble :: {self.col_to_weights_}")
-#
-#     def _score(
-#         self, split: pd.DataFrame, col_to_weights: List[Tuple[str, float]]
-#     ) -> float:
-#         preds = np.zeros((split[self.feature_cols_].values.shape[0],))
-#         for col, ew, lw in col_to_weights:
-#             preds += ew * split[col].values + lw
-#         return preds
-#
-#     def predict(self, ds: dataset.Dataset) -> None:
-#         for split in ("train", "valid", "test"):
-#             split = getattr(ds, split)
-#             split[self.prediction_col] = self._score(split, self.col_to_weights_)
+    def predict(self, df: pd.DataFrame) -> None:
+        df[self.prediction_col] = self.model_.predict(
+            df[self.feature_cols], num_iteration=self.model_.best_iteration
+        )
 
 
 # TODO(eugenhotaj): The pipeline should not just return the model, but rather a
@@ -378,17 +210,20 @@ def automl_pipeline(ds: dataset.Dataset) -> Any:
         encoder.fit_transform(ds)
         type_to_encoder[CategoricalEncoder] = encoder
 
-        encoder = OneHotEncoder(columns=ds.categorical_cols)
-        encoder.fit_transform(ds)
-        type_to_encoder[OneHotEncoder] = encoder
+    self.feature_cols_, categorical_cols = [], []
+    cols, inds = _gather_cols([NumericalEncoder], encoders)
+    self.feature_cols_ += cols + inds
+    categorical_cols += inds
+
+    cols, _ = _gather_cols([CategoricalEncoder], encoders)
+    self.feature_cols_ += cols
+    categorical_cols += cols
 
     # Preprocess label.
     LabelEncoder(column=ds.label_col).fit_transform(ds)
 
     # Train models.
-    models = [LightGBMModel("binary", "auc")]
-    for model in models:
-        model.fit(ds, type_to_encoder)
-        model.predict(ds)
-        return model
+    model = LightGBMModel("binary", "auc")
+    model.fit(ds, type_to_encoder)
+    model.predict(ds)
     return model

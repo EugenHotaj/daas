@@ -1,4 +1,3 @@
-autofeat
 lightgbm
 numpy
 openml

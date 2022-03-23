@@ -13,8 +13,8 @@ from download_data import BENCHMARK_TASKS
 
 
 @ray.remote
-def one_fold(task_id: int, fold: int) -> Dict[str, Dict[str, float]]:
-    ds = openml_utils.dataset_from_task(task_id, fold, n_valid_folds=2)
+def one_fold(task_id: int, test_fold: int) -> Dict[str, Dict[str, float]]:
+    ds = openml_utils.dataset_from_task(task_id, test_fold, n_valid_folds=2)
     model = pipeline.automl_pipeline(ds)
     model.predict(ds)
     metrics = {}
