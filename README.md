@@ -1,4 +1,4 @@
-# ray-automl
+# Decisions as a Service (daas)
 
 Efficent AutoML system built on top of [ray](https://github.com/ray-project/ray).
 
