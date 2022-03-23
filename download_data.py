@@ -7,7 +7,7 @@ import openml
 
 from automl import openml_utils
 
-BENCHMARK_TASKS = {"adult": 7592, "nomao": 9977, "phoneme": 9952}
+BENCHMARK_TASKS = {"credit-g": 31, "adult": 7592, "nomao": 9977, "phoneme": 9952}
 FOLD_COL = "fold"
 
 
