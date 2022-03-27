@@ -181,12 +181,26 @@ class LightGBMModel:
 
 
 class Pipeline:
+    """The AutoML pipeline.
+
+    Represents a (trainable) function fn(raw_inputs)->raw_preds. This class encapsulates
+    all parts of the machine learning pipeline (e.g. feature transforms, model(s),
+    ensemble, etc) and ensures that the training and inference path are the same.
+    """
+
     def __init__(
         self,
         numerical_columns: List[str],
         categorical_columns: List[str],
         label_column: str,
     ) -> None:
+        """Initializes a new Pipeline instance.
+
+        Args:
+            numerical_columns: Names of continuous valued columns.
+            categorical_columns: Names of categorical columns.
+            label_column: Name of the label column.
+        """
         self.numerical_columns = numerical_columns
         self.categorical_columns = categorical_columns
         self.label_column = label_column
@@ -201,14 +215,27 @@ class Pipeline:
         self._processed_feature_columns = []
         self._processed_label_column = None
 
-    def _transform_raw_features(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _transform_raw_features(
+        self, df: pd.DataFrame, has_label: bool = True
+    ) -> pd.DataFrame:
         df = df.copy(deep=False)  # Shallow copy because we don't modify original.
         self.numerical_encoder.transform(df)
         self.categorical_encoder.transform(df)
-        self.label_encoder.transform(df)
+        if has_label:
+            self.label_encoder.transform(df)
         return df
 
     def fit(self, train_df: pd.DataFrame, valid_df: pd.DataFrame) -> None:
+        """Fits the whole AutoML pipeline on the given train and valid sets.
+
+        The valid_df is used to tune pipeline hyperparameters. Once hyperparameters have
+        been tuned, models are retrained again on joined train + valid examples. Note
+        that feature transforms are not retrained.
+
+        Args:
+            train_df: DataFrame of training examples and labels.
+            valid_df: DataFrame of validation examples.
+        """
         # Fit feature transforms.
         self.numerical_encoder = NumericalEncoder(columns=self.numerical_columns)
         self.numerical_encoder.fit(train_df)
@@ -242,6 +269,7 @@ class Pipeline:
         self.prediction_column = self.model.prediction_column
 
     def predict(self, df: pd.DataFrame) -> pd.DataFrame:
-        df = self._transform_raw_features(df)  # Returns a shallow copy of df.
+        """Returns a copy of the dataframe with predictions."""
+        df = self._transform_raw_features(df, has_label=False)  # Returns shallow copy.
         self.model.predict(df)
         return df
