@@ -31,8 +31,8 @@ class Encoder:
         """
         self.encoder = encoder
         self.columns = columns
-        self.processed_columns = None
-        self.indicator_columns = None
+        self.processed_columns = []
+        self.indicator_columns = []
 
         self._name = self.__class__.__name__
 
@@ -219,6 +219,9 @@ class Pipeline:
         self.categorical_encoder.fit(train_df)
         self._processed_feature_columns.extend(
             self.categorical_encoder.processed_columns
+        )
+        self._processed_feature_columns.extend(
+            self.categorical_encoder.indicator_columns
         )
 
         # Fit label transform.
