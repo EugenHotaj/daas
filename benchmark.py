@@ -6,7 +6,6 @@ import numpy as np
 import ray
 from sklearn import metrics as sklearn_metrics
 
-from automl import dataset
 from automl import openml_utils
 from automl import pipeline
 from download_data import BENCHMARK_TASKS
@@ -14,13 +13,20 @@ from download_data import BENCHMARK_TASKS
 
 @ray.remote
 def one_fold(task_id: int, test_fold: int) -> Dict[str, Dict[str, float]]:
-    ds = openml_utils.dataset_from_task(task_id, test_fold, n_valid_folds=2)
-    model = pipeline.automl_pipeline(ds)
+    dataset = openml_utils.dataset_from_task(task_id, test_fold, n_valid_folds=2)
+    model = pipeline.Pipeline(
+        numerical_columns=dataset.numerical_cols,
+        categorical_columns=dataset.categorical_cols,
+        label_column=dataset.label_col,
+    )
+    model.fit(dataset.train, dataset.valid)
     metrics = {}
     for split in ("train", "valid", "test"):
-        df = getattr(ds, split)
-        predictions = df[model.prediction_column]
-        labels = df[model.label_column]
+        split_df = getattr(dataset, split)
+        pred_df = model.predict(split_df)
+        predictions = pred_df[model.prediction_column]
+        # TODO(ehotaj): Expose _processed_label_column?
+        labels = pred_df[model._processed_label_column]
         metric = {
             "auc": sklearn_metrics.roc_auc_score(labels, predictions),
             "pr_auc": sklearn_metrics.average_precision_score(labels, predictions),

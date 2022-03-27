@@ -31,10 +31,10 @@ class Encoder:
         """
         self.encoder = encoder
         self.columns = columns
-        self._name = self.__class__.__name__
+        self.processed_columns = None
+        self.indicator_columns = None
 
-        self.preprocessed_cols_ = None
-        self.indicator_cols_ = None
+        self._name = self.__class__.__name__
 
     @property
     def _indicator(self):
@@ -43,24 +43,25 @@ class Encoder:
 
     def fit(self, df: pd.DataFrame) -> None:
         self.encoder.fit(df[self.columns])
-        self.preprocessed_cols_ = [
-            f"__{self._name}_preprocessed_{col}__" for col in self.columns
+        self.processed_columns = [
+            f"__{self._name}_processed_{col}__" for col in self.columns
         ]
         n_indicator_cols = self._indicator.features_.shape[0] if self._indicator else 0
-        self.indicator_cols_ = [
+        self.indicator_columns = [
             f"__{self._name}_indicator_{i}__" for i in range(n_indicator_cols)
         ]
 
+    # TODO(ehotaj): Update transform to not modify df.
     def transform(self, df: pd.DataFrame) -> None:
         encoded, indicator = self.encoder.transform(df[self.columns]), None
         # TODO(ehotaj): It's much more efficient to work with sparse matricies.
         if scipy.sparse.issparse(encoded):
             encoded = encoded.todense()
-        if self.indicator_cols_:
-            encoded = encoded[:, : -len(self.indicator_cols_)]
-            indicator = encoded[:, -len(self.indicator_cols_) :]
-            df[self.indicator_cols_] = indicator
-        df[self.preprocessed_cols_] = encoded
+        if self.indicator_columns:
+            encoded = encoded[:, : -len(self.indicator_columns)]
+            indicator = encoded[:, -len(self.indicator_columns) :]
+            df[self.indicator_columnss] = indicator
+        df[self.processed_columns] = encoded
 
     def fit_transform(self, df: pd.DataFrame) -> None:
         self.fit(df)
@@ -122,12 +123,12 @@ class LabelEncoder(Encoder):
         # NOTE: We use OrdinalEncoder because LabelEncoder does not work with the
         # SKLearn pipeline interface.
         self._label_encoder = preprocessing.OrdinalEncoder()
-        self.encoder = pipeline.Pipeline(
+        encoder = pipeline.Pipeline(
             steps=[
                 ("label_encoder", self._label_encoder),
             ]
         )
-        super().__init__(self.encoder, [column])
+        super().__init__(encoder, [column])
 
     @property
     def _indicator(self):
@@ -143,8 +144,7 @@ class LightGBMModel:
         self.feature_columns = feature_columns
         self.label_column = label_column
         self.prediction_column = f"__{self.__class__.__name__}_predictions__"
-
-        self.model_ = None
+        self.model = None
 
     def _make_dataset(self, df: pd.DataFrame, reference: Optional[lgbm.Dataset] = None):
         # TODO(ehotaj): Should we explicitly specify categorical_feature here?
@@ -172,67 +172,73 @@ class LightGBMModel:
         params = {
             "objective": self.objective,
         }
-        self.model_ = lgbm.train(params, train_data, model.best_iteration)
+        self.model = lgbm.train(params, train_data, model.best_iteration)
 
     def predict(self, df: pd.DataFrame) -> None:
-        df[self.prediction_column] = self.model_.predict(
-            df[self.feature_columns], num_iteration=self.model_.best_iteration
+        df[self.prediction_column] = self.model.predict(
+            df[self.feature_columns], num_iteration=self.model.best_iteration
         )
 
 
-def _fit_and_apply(
-    encoder_or_model: Union[Encoder, LightGBMModel], ds: dataset.Dataset
-) -> None:
-    try:
-        encoder_or_model.fit(ds.train)
-    except TypeError as e:
-        # Some fit() functions expect a validation dataset.
-        if not "required positional argument" in str(e):
-            raise
-        encoder_or_model.fit(ds.train, ds.valid)
-    apply_fn = (
-        encoder_or_model.transform
-        if hasattr(encoder_or_model, "transform")
-        else encoder_or_model.predict
-    )
-    apply_fn(ds.train)
-    apply_fn(ds.valid)
-    apply_fn(ds.test)
+class Pipeline:
+    def __init__(
+        self,
+        numerical_columns: List[str],
+        categorical_columns: List[str],
+        label_column: str,
+    ) -> None:
+        self.numerical_columns = numerical_columns
+        self.categorical_columns = categorical_columns
+        self.label_column = label_column
 
+        # Create once self.fit() is called.
+        self.numerical_encoder = None
+        self.categorical_encoder = None
+        self.label_encoder = None
+        self.model = None
+        self.prediction_column = None
 
-# TODO(eugenhotaj): The pipeline should not just return the model, but rather a
-# predictor which takes as input raw data and produces predictions.
-def automl_pipeline(ds: dataset.Dataset) -> LightGBMModel:
-    """Entry point for the AutoML pipeline.
+        self._processed_feature_columns = []
+        self._processed_label_column = None
 
-    Args:
-        ds: The Dataset to use for training and evaluating the AutoML pipeline.
-    Returns:
-        The best model found.
-    """
-    # Preprocess features.
-    feature_cols = []
-    if ds.numerical_cols:
-        encoder = NumericalEncoder(columns=ds.numerical_cols)
-        _fit_and_apply(encoder, ds)
-        feature_cols.extend(encoder.preprocessed_cols_)
-        feature_cols.extend(encoder.indicator_cols_)
-    if ds.categorical_cols:
-        encoder = CategoricalEncoder(columns=ds.categorical_cols)
-        _fit_and_apply(encoder, ds)
-        feature_cols.extend(encoder.preprocessed_cols_)
+    def _transform_raw_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy(deep=False)  # Shallow copy because we don't modify original.
+        self.numerical_encoder.transform(df)
+        self.categorical_encoder.transform(df)
+        self.label_encoder.transform(df)
+        return df
 
-    # Preprocess label.
-    encoder = LabelEncoder(column=ds.label_col)
-    _fit_and_apply(encoder, ds)
-    label_col = encoder.preprocessed_cols_[0]
+    def fit(self, train_df: pd.DataFrame, valid_df: pd.DataFrame) -> None:
+        # Fit feature transforms.
+        self.numerical_encoder = NumericalEncoder(columns=self.numerical_columns)
+        self.numerical_encoder.fit(train_df)
+        self._processed_feature_columns.extend(self.numerical_encoder.processed_columns)
+        self._processed_feature_columns.extend(self.numerical_encoder.indicator_columns)
 
-    # Train models.
-    model = LightGBMModel(
-        objective="binary",
-        metric="auc",
-        feature_columns=feature_cols,
-        label_column=label_col,
-    )
-    _fit_and_apply(model, ds)
-    return model
+        self.categorical_encoder = CategoricalEncoder(columns=self.categorical_columns)
+        self.categorical_encoder.fit(train_df)
+        self._processed_feature_columns.extend(
+            self.categorical_encoder.processed_columns
+        )
+
+        # Fit label transform.
+        self.label_encoder = LabelEncoder(column=self.label_column)
+        self.label_encoder.fit(train_df)
+        self._processed_label_column = self.label_encoder.processed_columns[0]
+
+        # Fit model.
+        self.model = LightGBMModel(
+            objective="binary",
+            metric="auc",
+            feature_columns=self._processed_feature_columns,
+            label_column=self._processed_label_column,
+        )
+        train_df = self._transform_raw_features(train_df)
+        valid_df = self._transform_raw_features(valid_df)
+        self.model.fit(train_df, valid_df)
+        self.prediction_column = self.model.prediction_column
+
+    def predict(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = self._transform_raw_features(df)  # Returns a shallow copy of df.
+        self.model.predict(df)
+        return df
