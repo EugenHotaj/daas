@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import lightgbm as lgbm
 import numpy as np
@@ -62,7 +62,7 @@ class Encoder:
             df[self.indicator_cols_] = indicator
         df[self.preprocessed_cols_] = encoded
 
-    def fit_transform(self, df: pdf.DataFrame) -> None:
+    def fit_transform(self, df: pd.DataFrame) -> None:
         self.fit(df)
         self.transform(df)
 
@@ -109,7 +109,6 @@ class NumericalEncoder(Encoder):
         super().__init__(encoder, columns)
 
 
-# TODO(eugenhotaj): LabelEncoder should not overwrite the raw label.
 class LabelEncoder(Encoder):
     """Encodes a label colum into ints."""
 
@@ -119,28 +118,20 @@ class LabelEncoder(Encoder):
         Args:
             column: The label column to encode.
         """
-        self._label_encoder = preprocessing.LabelEncoder()
+
+        # NOTE: We use OrdinalEncoder because LabelEncoder does not work with the
+        # SKLearn pipeline interface.
+        self._label_encoder = preprocessing.OrdinalEncoder()
         self.encoder = pipeline.Pipeline(
             steps=[
-                ("label_encoder", preprocessing.LabelEncoder()),
+                ("label_encoder", self._label_encoder),
             ]
         )
-        super().__init__(encoder, [column])
+        super().__init__(self.encoder, [column])
 
     @property
     def _indicator(self):
         return None
-
-
-def _gather_cols(
-    encoders: List[type], type_to_encoder: Dict[type, Encoder]
-) -> Tuple[List[str], List[str]]:
-    preprocessed_cols, indicator_cols = [], []
-    for encoder in encoders:
-        if encoder in type_to_encoder:
-            preprocessed_cols += type_to_encoder[encoder].preprocessed_cols_
-            indicator_cols += type_to_encoder[encoder].indicator_cols_
-    return preprocessed_cols, indicator_cols
 
 
 class LightGBMModel:
@@ -177,21 +168,41 @@ class LightGBMModel:
         )
 
         # Full dataset.
-        train_data = self._make_dataset(pd.concat([train_df, valid_df])
+        train_data = self._make_dataset(pd.concat([train_df, valid_df]))
         params = {
             "objective": self.objective,
         }
         self.model_ = lgbm.train(params, train_data, model.best_iteration)
 
     def predict(self, df: pd.DataFrame) -> None:
-        df[self.prediction_col] = self.model_.predict(
-            df[self.feature_cols], num_iteration=self.model_.best_iteration
+        df[self.prediction_column] = self.model_.predict(
+            df[self.feature_columns], num_iteration=self.model_.best_iteration
         )
+
+
+def _fit_and_apply(
+    encoder_or_model: Union[Encoder, LightGBMModel], ds: dataset.Dataset
+) -> None:
+    try:
+        encoder_or_model.fit(ds.train)
+    except TypeError as e:
+        # Some fit() functions expect a validation dataset.
+        if not "required positional argument" in str(e):
+            raise
+        encoder_or_model.fit(ds.train, ds.valid)
+    apply_fn = (
+        encoder_or_model.transform
+        if hasattr(encoder_or_model, "transform")
+        else encoder_or_model.predict
+    )
+    apply_fn(ds.train)
+    apply_fn(ds.valid)
+    apply_fn(ds.test)
 
 
 # TODO(eugenhotaj): The pipeline should not just return the model, but rather a
 # predictor which takes as input raw data and produces predictions.
-def automl_pipeline(ds: dataset.Dataset) -> Any:
+def automl_pipeline(ds: dataset.Dataset) -> LightGBMModel:
     """Entry point for the AutoML pipeline.
 
     Args:
@@ -199,31 +210,29 @@ def automl_pipeline(ds: dataset.Dataset) -> Any:
     Returns:
         The best model found.
     """
-    type_to_encoder = {}
     # Preprocess features.
+    feature_cols = []
     if ds.numerical_cols:
         encoder = NumericalEncoder(columns=ds.numerical_cols)
-        encoder.fit_transform(ds)
-        type_to_encoder[NumericalEncoder] = encoder
+        _fit_and_apply(encoder, ds)
+        feature_cols.extend(encoder.preprocessed_cols_)
+        feature_cols.extend(encoder.indicator_cols_)
     if ds.categorical_cols:
         encoder = CategoricalEncoder(columns=ds.categorical_cols)
-        encoder.fit_transform(ds)
-        type_to_encoder[CategoricalEncoder] = encoder
-
-    self.feature_cols_, categorical_cols = [], []
-    cols, inds = _gather_cols([NumericalEncoder], encoders)
-    self.feature_cols_ += cols + inds
-    categorical_cols += inds
-
-    cols, _ = _gather_cols([CategoricalEncoder], encoders)
-    self.feature_cols_ += cols
-    categorical_cols += cols
+        _fit_and_apply(encoder, ds)
+        feature_cols.extend(encoder.preprocessed_cols_)
 
     # Preprocess label.
-    LabelEncoder(column=ds.label_col).fit_transform(ds)
+    encoder = LabelEncoder(column=ds.label_col)
+    _fit_and_apply(encoder, ds)
+    label_col = encoder.preprocessed_cols_[0]
 
     # Train models.
-    model = LightGBMModel("binary", "auc")
-    model.fit(ds, type_to_encoder)
-    model.predict(ds)
+    model = LightGBMModel(
+        objective="binary",
+        metric="auc",
+        feature_columns=feature_cols,
+        label_column=label_col,
+    )
+    _fit_and_apply(model, ds)
     return model
