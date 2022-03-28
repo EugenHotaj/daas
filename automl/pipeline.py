@@ -8,7 +8,6 @@ from sklearn import impute
 from sklearn import pipeline
 from sklearn import preprocessing
 
-from automl import dataset
 
 _MISSING = "__missing_value__"
 
@@ -21,15 +20,18 @@ class Encoder:
     def __init__(
         self,
         encoder: pipeline.Pipeline,
+        dtype: Union[str, np.dtype],
         columns: List[str],
     ):
         """Initializes a new Encoder instance.
 
         Args:
             encoder: Encoder to use for transforming columns.
+            dtype: The dtype of the output.
             columns: List of columns to encode.
         """
         self.encoder = encoder
+        self.dtype = dtype
         self.columns = columns
         self.processed_columns = []
         self.indicator_columns = []
@@ -60,8 +62,10 @@ class Encoder:
         if self.indicator_columns:
             encoded = encoded[:, : -len(self.indicator_columns)]
             indicator = encoded[:, -len(self.indicator_columns) :]
-            df[self.indicator_columnss] = indicator
+            df[self.indicator_columns] = indicator
+            df[self.indicator_columns] = df[self.indicator_columns].astype(np.int64)
         df[self.processed_columns] = encoded
+        df[self.processed_columns] = df[self.processed_columns].astype(self.dtype)
 
     def fit_transform(self, df: pd.DataFrame) -> None:
         self.fit(df)
@@ -88,7 +92,7 @@ class CategoricalEncoder(Encoder):
                 ("ordinal_encoder", self._ordinal_encoder),
             ]
         )
-        super().__init__(encoder, columns)
+        super().__init__(encoder, "category", columns)
 
 
 class NumericalEncoder(Encoder):
@@ -107,7 +111,7 @@ class NumericalEncoder(Encoder):
                 ("standard_scaler", self._standard_scaler),
             ]
         )
-        super().__init__(encoder, columns)
+        super().__init__(encoder, np.float64, columns)
 
 
 class LabelEncoder(Encoder):
@@ -128,7 +132,7 @@ class LabelEncoder(Encoder):
                 ("label_encoder", self._label_encoder),
             ]
         )
-        super().__init__(encoder, [column])
+        super().__init__(encoder, np.int64, [column])
 
     @property
     def _indicator(self):
@@ -149,16 +153,13 @@ class LightGBMModel:
     def _make_dataset(self, df: pd.DataFrame, reference: Optional[lgbm.Dataset] = None):
         # TODO(ehotaj): Should we explicitly specify categorical_feature here?
         return lgbm.Dataset(
-            df[self.feature_columns],
-            label=df[self.label_column],
-            feature_name=self.feature_columns,
-            reference=reference,
+            df[self.feature_columns], label=df[self.label_column], reference=reference
         )
 
     def fit(self, train_df: pd.DataFrame, valid_df: pd.DataFrame) -> None:
         # Early stopping.
         train_data = self._make_dataset(train_df)
-        valid_data = self._make_dataset(valid_df, reference=train_data)
+        valid_data = self._make_dataset(valid_df, train_data)
         params = {
             "objective": self.objective,
             "metric": [self.metric],
@@ -215,13 +216,13 @@ class Pipeline:
         self._processed_feature_columns = []
         self._processed_label_column = None
 
-    def _transform_raw_features(
-        self, df: pd.DataFrame, has_label: bool = True
-    ) -> pd.DataFrame:
+    def _transform_raw_features(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy(deep=False)  # Shallow copy because we don't modify original.
-        self.numerical_encoder.transform(df)
-        self.categorical_encoder.transform(df)
-        if has_label:
+        if self.numerical_columns:
+            self.numerical_encoder.transform(df)
+        if self.categorical_columns:
+            self.categorical_encoder.transform(df)
+        if self.label_column in df.columns:
             self.label_encoder.transform(df)
         return df
 
@@ -237,19 +238,27 @@ class Pipeline:
             valid_df: DataFrame of validation examples.
         """
         # Fit feature transforms.
-        self.numerical_encoder = NumericalEncoder(columns=self.numerical_columns)
-        self.numerical_encoder.fit(train_df)
-        self._processed_feature_columns.extend(self.numerical_encoder.processed_columns)
-        self._processed_feature_columns.extend(self.numerical_encoder.indicator_columns)
+        if self.numerical_columns:
+            self.numerical_encoder = NumericalEncoder(columns=self.numerical_columns)
+            self.numerical_encoder.fit(train_df)
+            self._processed_feature_columns.extend(
+                self.numerical_encoder.processed_columns
+            )
+            self._processed_feature_columns.extend(
+                self.numerical_encoder.indicator_columns
+            )
 
-        self.categorical_encoder = CategoricalEncoder(columns=self.categorical_columns)
-        self.categorical_encoder.fit(train_df)
-        self._processed_feature_columns.extend(
-            self.categorical_encoder.processed_columns
-        )
-        self._processed_feature_columns.extend(
-            self.categorical_encoder.indicator_columns
-        )
+        if self.categorical_columns:
+            self.categorical_encoder = CategoricalEncoder(
+                columns=self.categorical_columns
+            )
+            self.categorical_encoder.fit(train_df)
+            self._processed_feature_columns.extend(
+                self.categorical_encoder.processed_columns
+            )
+            self._processed_feature_columns.extend(
+                self.categorical_encoder.indicator_columns
+            )
 
         # Fit label transform.
         self.label_encoder = LabelEncoder(column=self.label_column)
@@ -270,6 +279,6 @@ class Pipeline:
 
     def predict(self, df: pd.DataFrame) -> pd.DataFrame:
         """Returns a copy of the dataframe with predictions."""
-        df = self._transform_raw_features(df, has_label=False)  # Returns shallow copy.
+        df = self._transform_raw_features(df)  # Return shallow copy.
         self.model.predict(df)
         return df
