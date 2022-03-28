@@ -8,6 +8,6 @@ Benchmark (OpenML):
 
 | Task | AUC OpenML | AUC Ours | Diff |
 | --- | --- | --- | --- |
-| [adult](https://www.openml.org/t/7592) | .929 | .9293 | +0.0003 |
-| [nomao](https://www.openml.org/t/9977) | .9964 | .9964 | 0.0 |
-| [phoneme](https://www.openml.org/t/9952) | .9674 | .9658 | -0.0016 |
+| [adult](https://www.openml.org/t/7592) | .929 | .93 | +0.001 |
+| [nomao](https://www.openml.org/t/9977) | .9964 | .9963 | -0.0001 |
+| [phoneme](https://www.openml.org/t/9952) | .9674 | .9612 | -0.0062 |
