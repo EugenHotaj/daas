@@ -55,15 +55,14 @@ class Encoder:
 
     # TODO(ehotaj): Update transform to not modify df.
     def transform(self, df: pd.DataFrame) -> None:
-        encoded, indicator = self.encoder.transform(df[self.columns]), None
+        encoded = self.encoder.transform(df[self.columns])
         # TODO(ehotaj): It's much more efficient to work with sparse matricies.
         if scipy.sparse.issparse(encoded):
             encoded = encoded.todense()
         if self.indicator_columns:
-            encoded = encoded[:, : -len(self.indicator_columns)]
-            indicator = encoded[:, -len(self.indicator_columns) :]
-            df[self.indicator_columns] = indicator
+            df[self.indicator_columns] = encoded[:, -len(self.indicator_columns) :]
             df[self.indicator_columns] = df[self.indicator_columns].astype(np.int64)
+            encoded = encoded[:, : -len(self.indicator_columns)]
         df[self.processed_columns] = encoded
         df[self.processed_columns] = df[self.processed_columns].astype(self.dtype)
 
@@ -81,7 +80,7 @@ class CategoricalEncoder(Encoder):
 
     def __init__(self, columns: List[str]):
         self._simple_imputer = impute.SimpleImputer(
-            strategy="constant", fill_value=_MISSING
+            strategy="constant", fill_value=_MISSING, add_indicator=True
         )
         self._ordinal_encoder = preprocessing.OrdinalEncoder(
             handle_unknown="use_encoded_value", unknown_value=np.nan
@@ -148,7 +147,10 @@ class LightGBMModel:
         self.feature_columns = feature_columns
         self.label_column = label_column
         self.prediction_column = f"__{self.__class__.__name__}_predictions__"
+
+        # Set after fit() is called.
         self.model = None
+        self.best_iteration = None
 
     def _make_dataset(self, df: pd.DataFrame, reference: Optional[lgbm.Dataset] = None):
         # TODO(ehotaj): Should we explicitly specify categorical_feature here?
@@ -167,17 +169,16 @@ class LightGBMModel:
         model = lgbm.train(
             params, train_data, 500, valid_sets=[valid_data], early_stopping_rounds=50
         )
+        self.best_iteration = model.best_iteration
 
         # Full dataset.
         train_data = self._make_dataset(pd.concat([train_df, valid_df]))
-        params = {
-            "objective": self.objective,
-        }
-        self.model = lgbm.train(params, train_data, model.best_iteration)
+        del params["metric"]
+        self.model = lgbm.train(params, train_data, self.best_iteration)
 
     def predict(self, df: pd.DataFrame) -> None:
         df[self.prediction_column] = self.model.predict(
-            df[self.feature_columns], num_iteration=self.model.best_iteration
+            df[self.feature_columns], num_iteration=self.best_iteration
         )
 
 
