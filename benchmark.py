@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import ray
 from sklearn import metrics as sklearn_metrics
+import pandas as pd
 
 from automl import openml_utils
 from automl import pipeline as automl_pipeline
@@ -19,10 +20,10 @@ def one_fold(task_id: int, test_fold: int) -> Dict[str, Dict[str, float]]:
         categorical_columns=dataset.categorical_cols,
         label_column=dataset.label_col,
     )
-    pipeline.fit(dataset.train, dataset.valid)
+    train_df, test_df = pd.concat([dataset.train, dataset.valid]), dataset.test
+    pipeline.fit(train_df)
     metrics = {}
-    for split in ("train", "valid", "test"):
-        split_df = getattr(dataset, split)
+    for split, split_df in [("train", train_df), ("test", test_df)]:
         pred_df = pipeline.predict(split_df)
         predictions = pred_df[pipeline.prediction_column]
         # TODO(ehotaj): Expose _processed_label_column?

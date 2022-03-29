@@ -9,9 +9,6 @@ from sklearn import pipeline
 from sklearn import preprocessing
 
 
-_MISSING = "__missing_value__"
-
-
 # TODO(ehotaj): The distinction between Encoder/Model is pretty flimsy. Consider just
 # having one Transform base class for everything.
 class Encoder:
@@ -78,9 +75,13 @@ class CategoricalEncoder(Encoder):
     is added per column with missing values.
     """
 
+    MISSING_VALUE = "__MISSING__"
+
     def __init__(self, columns: List[str]):
         self._simple_imputer = impute.SimpleImputer(
-            strategy="constant", fill_value=_MISSING, add_indicator=True
+            strategy="constant",
+            fill_value=CategoricalEncoder.MISSING_VALUE,
+            add_indicator=True,
         )
         self._ordinal_encoder = preprocessing.OrdinalEncoder(
             handle_unknown="use_encoded_value", unknown_value=np.nan
@@ -152,34 +153,23 @@ class LightGBMModel:
         self.model = None
         self.best_iteration = None
 
-    def _make_dataset(self, df: pd.DataFrame, reference: Optional[lgbm.Dataset] = None):
-        # TODO(ehotaj): Should we explicitly specify categorical_feature here?
-        return lgbm.Dataset(
-            df[self.feature_columns], label=df[self.label_column], reference=reference
-        )
-
-    def fit(self, train_df: pd.DataFrame, valid_df: pd.DataFrame) -> None:
-        # Early stopping.
-        train_data = self._make_dataset(train_df)
-        valid_data = self._make_dataset(valid_df, train_data)
+    def fit(self, df: pd.DataFrame) -> None:
+        train_set = lgbm.Dataset(df[self.feature_columns], label=df[self.label_column])
         params = {
             "objective": self.objective,
             "metric": [self.metric],
+            "num_boost_round": 500,
+            "early_stopping_rounds": 50,
         }
-        model = lgbm.train(
-            params, train_data, 500, valid_sets=[valid_data], early_stopping_rounds=50
-        )
-        self.best_iteration = model.best_iteration
-
-        # Full dataset.
-        train_data = self._make_dataset(pd.concat([train_df, valid_df]))
-        del params["metric"]
-        self.model = lgbm.train(params, train_data, self.best_iteration)
+        result = lgbm.cv(params=params, train_set=train_set, return_cvbooster=True)
+        self.model = result["cvbooster"]
+        self.best_iteration = self.model.best_iteration
 
     def predict(self, df: pd.DataFrame) -> None:
-        df[self.prediction_column] = self.model.predict(
+        predictions = self.model.predict(
             df[self.feature_columns], num_iteration=self.best_iteration
         )
+        df[self.prediction_column] = np.mean(predictions, axis=0)
 
 
 class Pipeline:
@@ -227,21 +217,12 @@ class Pipeline:
             self.label_encoder.transform(df)
         return df
 
-    def fit(self, train_df: pd.DataFrame, valid_df: pd.DataFrame) -> None:
-        """Fits the whole AutoML pipeline on the given train and valid sets.
-
-        The valid_df is used to tune pipeline hyperparameters. Once hyperparameters have
-        been tuned, models are retrained again on joined train + valid examples. Note
-        that feature transforms are not retrained.
-
-        Args:
-            train_df: DataFrame of training examples and labels.
-            valid_df: DataFrame of validation examples.
-        """
+    def fit(self, df: pd.DataFrame) -> None:
+        """Fits the whole AutoML pipeline on the given train set."""
         # Fit feature transforms.
         if self.numerical_columns:
             self.numerical_encoder = NumericalEncoder(columns=self.numerical_columns)
-            self.numerical_encoder.fit(train_df)
+            self.numerical_encoder.fit(df)
             self._processed_feature_columns.extend(
                 self.numerical_encoder.processed_columns
             )
@@ -253,7 +234,7 @@ class Pipeline:
             self.categorical_encoder = CategoricalEncoder(
                 columns=self.categorical_columns
             )
-            self.categorical_encoder.fit(train_df)
+            self.categorical_encoder.fit(df)
             self._processed_feature_columns.extend(
                 self.categorical_encoder.processed_columns
             )
@@ -263,7 +244,7 @@ class Pipeline:
 
         # Fit label transform.
         self.label_encoder = LabelEncoder(column=self.label_column)
-        self.label_encoder.fit(train_df)
+        self.label_encoder.fit(df)
         self._processed_label_column = self.label_encoder.processed_columns[0]
 
         # Fit model.
@@ -273,9 +254,8 @@ class Pipeline:
             feature_columns=self._processed_feature_columns,
             label_column=self._processed_label_column,
         )
-        train_df = self._transform_raw_features(train_df)
-        valid_df = self._transform_raw_features(valid_df)
-        self.model.fit(train_df, valid_df)
+        df = self._transform_raw_features(df)
+        self.model.fit(df)
         self.prediction_column = self.model.prediction_column
 
     def predict(self, df: pd.DataFrame) -> pd.DataFrame:
