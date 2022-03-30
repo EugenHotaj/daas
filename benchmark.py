@@ -14,7 +14,7 @@ from download_data import BENCHMARK_TASKS
 
 @ray.remote
 def one_fold(task_id: int, test_fold: int) -> Dict[str, Dict[str, float]]:
-    dataset = openml_utils.dataset_from_task(task_id, test_fold, n_valid_folds=3)
+    dataset = openml_utils.dataset_from_task(task_id, test_fold, n_valid_folds=1)
     pipeline = automl_pipeline.Pipeline(
         numerical_columns=dataset.numerical_cols,
         categorical_columns=dataset.categorical_cols,
