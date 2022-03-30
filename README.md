@@ -2,7 +2,18 @@
 
 Decisions as a Service (DaaS) is an efficent AutoML system built on top of [ray](https://github.com/ray-project/ray).
 
+Vision:
+```python3
 
+def automate_boring_decision():
+  features = get_features(...)
+  response = daas.predict(MY_MODEL_ID, features)
+  if response["probs"] > 0.8:
+    label = do_the_one_thing()
+   else:
+    label = do_the_other_thing()
+   daas.train(MY_MODEL_ID, response["prediction_id"], label)
+```
 
 ## 📈 Benchmarks (OpenML)
 
