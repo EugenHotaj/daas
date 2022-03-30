@@ -10,9 +10,11 @@ from automl import openml_utils
 BENCHMARK_TASKS = {
     "kr-vs-kp": 3,
     "credit-g": 31,
+    "kc1": 3917,
     "adult": 7592,
     "phoneme": 9952,
     "nomao": 9977,
+    "jasmine": 168911,
 }
 FOLD_COL = "fold"
 
