@@ -12,4 +12,6 @@ Benchmark (OpenML):
 | [adult](https://www.openml.org/t/7592) | .929 | .9305 | +0.006 |
 | [phoneme](https://www.openml.org/t/9952) | .9674 | .962 | -0.0054 |
 | [nomao](https://www.openml.org/t/9977) | .9964 | .9965 | +0.0001 |
-| [jasmine](https://www.openml.org/t/168911) | .7497 | .8651 | +.1154 |
+| [jasmine](https://www.openml.org/t/168911) * | .7497 | .8651 | +0.1154 |
+
+\* NOTE: Likely optimistic results because of too few OpenML runs.
