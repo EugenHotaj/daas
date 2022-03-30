@@ -1,10 +1,10 @@
-# Decisions as a Service (daas)
+# 🏖 Automate boring decisions with ML
 
-Efficent AutoML system built on top of [ray](https://github.com/ray-project/ray).
+Decisions as a Service (DaaS) is an efficent AutoML system built on top of [ray](https://github.com/ray-project/ray).
 
----
 
-Benchmark (OpenML):
+
+## 📈 Benchmarks (OpenML)
 
 | Task | AUC OpenML | AUC Ours | Diff |
 | --- | --- | --- | --- |
