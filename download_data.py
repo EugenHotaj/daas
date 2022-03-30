@@ -14,7 +14,9 @@ BENCHMARK_TASKS = {
     "adult": 7592,
     "phoneme": 9952,
     "nomao": 9977,
+    "bank-marketing": 14965,
     "jasmine": 168911,
+    "sylvine": 168912,
 }
 FOLD_COL = "fold"
 
