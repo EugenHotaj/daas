@@ -15,6 +15,7 @@ BENCHMARK_TASKS = {
     "phoneme": 9952,
     "nomao": 9977,
     "bank-marketing": 14965,
+    "higgs": 146606,
     "jasmine": 168911,
     "sylvine": 168912,
 }
