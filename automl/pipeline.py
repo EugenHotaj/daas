@@ -150,10 +150,12 @@ class LightGBMModel:
         self.prediction_column = f"__{self.__class__.__name__}_predictions__"
 
         # Set after fit() is called.
-        self.model = None
+        self.cv_booster = None
+        self.full_booster = None
         self.best_iteration = None
 
     def fit(self, df: pd.DataFrame) -> None:
+        # Early stopping.
         train_set = lgbm.Dataset(df[self.feature_columns], label=df[self.label_column])
         params = {
             "objective": self.objective,
@@ -162,14 +164,20 @@ class LightGBMModel:
             "early_stopping_rounds": 50,
         }
         result = lgbm.cv(params=params, train_set=train_set, return_cvbooster=True)
-        self.model = result["cvbooster"]
-        self.best_iteration = self.model.best_iteration
+        self.cv_booster = result["cvbooster"]
+        self.best_iteration = self.cv_booster.best_iteration
+
+        # Full dataset.
+        del params["early_stopping_rounds"]
+        del params["metric"]
+        params["num_boost_round"] = self.best_iteration
+        self.full_booster = lgbm.train(params=params, train_set=train_set)
 
     def predict(self, df: pd.DataFrame) -> None:
-        predictions = self.model.predict(
-            df[self.feature_columns], num_iteration=self.best_iteration
-        )
-        df[self.prediction_column] = np.mean(predictions, axis=0)
+        features = df[self.feature_columns]
+        cv_preds = np.mean(self.cv_booster.predict(features), axis=0)
+        full_preds = self.full_booster.predict(features)
+        df[self.prediction_column] = 0.5 * cv_preds + 0.5 * full_preds
 
 
 class Pipeline:
