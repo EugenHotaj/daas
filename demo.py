@@ -42,8 +42,7 @@ def run_demo():
     print(f"Model id :: {model_id}")
 
     # Make some predictions and observe the label.
-    records = train.to_dict(orient="records")
-    for record in records[:10]:
+    for record in train.to_dict(orient="records"):
         label = {dataset.label_col: record.pop(dataset.label_col)}
         prediction_id, probs = send_example(model_id, record, label)
         print(f"prediction_id :: {prediction_id} probs :: {probs}")
@@ -53,10 +52,15 @@ def run_demo():
     response.raise_for_status()
 
     # Make some more predictions.
-    for record in records[10:15]:
-        record.pop(dataset.label_col)  # Remove label.
-        prediction_id, probs = send_example(model_id, record)
-        print(f"prediction_id :: {prediction_id} probs :: {probs}")
+    correct, total = 0, 0
+    for record in test.to_dict(orient="records"):
+        label = record.pop(dataset.label_col)
+        prediction_id, probs = send_example(model_id, record)  # No label.
+        print(f"prediction_id :: {prediction_id} probs :: {probs} label :: {label}")
+        if probs["good"] >= 0.5 and label == "good":
+            correct += 1
+        total += 1
+    print(f"Accuracy :: {correct / total:2f}")
 
 
 if __name__ == "__main__":
