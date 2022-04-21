@@ -57,10 +57,11 @@ def run_demo():
         label = record.pop(dataset.label_col)
         prediction_id, probs = send_example(model_id, record)  # No label.
         print(f"prediction_id :: {prediction_id} probs :: {probs} label :: {label}")
-        if probs["good"] >= 0.5 and label == "good":
+        pred = "good" if probs["good"] >= 0.5 else "bad"
+        if pred == label:
             correct += 1
         total += 1
-    print(f"Accuracy :: {correct / total:2f}")
+    print(f"Accuracy :: {correct / total:.2f}")
 
 
 if __name__ == "__main__":
