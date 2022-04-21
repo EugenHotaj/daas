@@ -8,6 +8,7 @@ from sklearn import impute
 from sklearn import pipeline
 from sklearn import preprocessing
 
+TDtype = Union[str, type, np.dtype]
 
 # TODO(ehotaj): The distinction between Encoder/Model is pretty flimsy. Consider just
 # having one Transform base class for everything.
@@ -17,19 +18,23 @@ class Encoder:
     def __init__(
         self,
         encoder: pipeline.Pipeline,
-        dtype: Union[str, np.dtype],
+        in_dtype: TDtype,
+        out_dtype: TDtype,
         columns: List[str],
     ):
         """Initializes a new Encoder instance.
 
         Args:
             encoder: Encoder to use for transforming columns.
-            dtype: The dtype of the output.
+            in_dtype: The dtype to cast inputs to before encoding.
+            out_dtype: The dtype to cast outputs to after encoding.
             columns: List of columns to encode.
         """
         self.encoder = encoder
-        self.dtype = dtype
+        self.in_dtype = in_dtype
+        self.out_dtype = out_dtype
         self.columns = columns
+
         self.processed_columns = []
         self.indicator_columns = []
 
@@ -41,7 +46,7 @@ class Encoder:
         return self.encoder["simple_imputer"].indicator_
 
     def fit(self, df: pd.DataFrame) -> None:
-        self.encoder.fit(df[self.columns])
+        self.encoder.fit(df[self.columns].astype(self.in_dtype))
         self.processed_columns = [
             f"__{self._name}_processed_{col}__" for col in self.columns
         ]
@@ -52,16 +57,17 @@ class Encoder:
 
     # TODO(ehotaj): Update transform to not modify df.
     def transform(self, df: pd.DataFrame) -> None:
-        encoded = self.encoder.transform(df[self.columns])
+        encoded = self.encoder.transform(df[self.columns].astype(self.in_dtype))
         # TODO(ehotaj): It's much more efficient to work with sparse matricies.
         if scipy.sparse.issparse(encoded):
             encoded = encoded.todense()
         if self.indicator_columns:
             df[self.indicator_columns] = encoded[:, -len(self.indicator_columns) :]
+            # NOTE: Indicator columns should always be of type int64.
             df[self.indicator_columns] = df[self.indicator_columns].astype(np.int64)
             encoded = encoded[:, : -len(self.indicator_columns)]
         df[self.processed_columns] = encoded
-        df[self.processed_columns] = df[self.processed_columns].astype(self.dtype)
+        df[self.processed_columns] = df[self.processed_columns].astype(self.out_dtype)
 
     def fit_transform(self, df: pd.DataFrame) -> None:
         self.fit(df)
@@ -92,7 +98,9 @@ class CategoricalEncoder(Encoder):
                 ("ordinal_encoder", self._ordinal_encoder),
             ]
         )
-        super().__init__(encoder, "category", columns)
+        super().__init__(
+            encoder=encoder, in_dtype=str, out_dtype="category", columns=columns
+        )
 
 
 class NumericalEncoder(Encoder):
@@ -111,7 +119,9 @@ class NumericalEncoder(Encoder):
                 ("standard_scaler", self._standard_scaler),
             ]
         )
-        super().__init__(encoder, np.float64, columns)
+        super().__init__(
+            encoder=encoder, in_dtype=np.float64, out_dtype=np.float64, columns=columns
+        )
 
 
 class LabelEncoder(Encoder):
@@ -132,7 +142,9 @@ class LabelEncoder(Encoder):
                 ("label_encoder", self._label_encoder),
             ]
         )
-        super().__init__(encoder, np.int64, [column])
+        super().__init__(
+            encoder=encoder, in_dtype=str, out_dtype=np.int64, columns=[column]
+        )
 
     @property
     def _indicator(self):

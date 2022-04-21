@@ -50,11 +50,13 @@ class Server:
     @app.get("/models/fit")
     async def test_fit_model(self):
         """Fits the model for testing purposes."""
-        joined_examples = []
-        for prediction_id, features in self.features_table:
+        joined = []
+        for prediction_id, features in self.features_table.items():
             label = self.labels_table[prediction_id]
-            joined_examples.append({**features, **label})
-        print(joined_examples)
+            joined.append({**features, **label})
+        train_df = pd.DataFrame.from_records(joined)
+        self.model.fit(train_df)
+        return {}
 
     @app.post("/models/create", response_model=CreateModelResponse)
     async def create_model(self, request: CreateModelRequest) -> CreateModelResponse:
