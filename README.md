@@ -25,6 +25,7 @@ def automate_boring_decision(model_id, features):
 | Task | AUC OpenML | AUC Ours | Diff |
 | --- | --- | --- | --- |
 | [kr-vs-kp](https://www.openml.org/t/3) | 0.9999 | 0.9998 | -0.0001 |
+| [credit-g](https://www.openml.org/t/31) | 0.8068 | 0.7904 | -0.0164 |
 | [adult](https://www.openml.org/t/7592) | 0.9290 | 0.9305 | +0.006 |
 | [phoneme](https://www.openml.org/t/9952) | 0.9674 | 0.9624 | -0.0050 |
 | [nomao](https://www.openml.org/t/9977) | 0.9964 | 0.9965 | +0.0001 |
