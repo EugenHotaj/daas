@@ -14,16 +14,15 @@ from download_data import BENCHMARK_TASKS
 
 @ray.remote
 def one_fold(task_id: int, test_fold: int) -> Dict[str, Dict[str, float]]:
-    dataset = openml_utils.dataset_from_task(task_id, test_fold, n_valid_folds=1)
+    dataset = openml_utils.dataset_from_task(task_id, test_fold)
     pipeline = automl_pipeline.Pipeline(
         numerical_columns=dataset.numerical_cols,
         categorical_columns=dataset.categorical_cols,
         label_column=dataset.label_col,
     )
-    train_df, test_df = pd.concat([dataset.train, dataset.valid]), dataset.test
-    pipeline.fit(train_df)
+    pipeline.fit(dataset.train)
     metrics = {}
-    for split, split_df in [("train", train_df), ("test", test_df)]:
+    for split, split_df in [("train", dataset.train), ("test", dataset.test)]:
         pred_df = pipeline.predict(split_df)
         predictions = pred_df[pipeline.prediction_column]
         # TODO(ehotaj): Expose _processed_label_column?

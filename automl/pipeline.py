@@ -241,6 +241,10 @@ class Pipeline:
 
     def fit(self, df: pd.DataFrame) -> None:
         """Fits the whole AutoML pipeline on the given train set."""
+        # TODO(ehotaj): Shuffle dataset... should not make a difference but somehow
+        # it boosts performance for some datsets?
+        df = df.iloc[np.random.permutation(len(df))]
+
         # Fit feature transforms.
         if self.numerical_columns:
             self.numerical_encoder = NumericalEncoder(columns=self.numerical_columns)
