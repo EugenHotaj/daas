@@ -6,7 +6,8 @@ import pandas as pd
 import ray
 
 
-def send_example(model_id, features, label=None):
+@ray.remote
+def send_example(model_id, features, label):
     # Make a prediction.
     request = {"model_id": model_id, "features": features}
     response = requests.post("http://localhost:8000/models/predict", json=request)
@@ -21,7 +22,17 @@ def send_example(model_id, features, label=None):
         response = requests.post("http://localhost:8000/models/train", json=request)
         response.raise_for_status()
 
-    return prediction_id, probs
+    print(f"prediction_id :: {prediction_id} probs :: {probs} label :: {label}")
+    return prediction_id, probs, label["class"]
+
+
+def send_examples(model_id, df, label_col):
+    results = []
+    for record in df.to_dict(orient="records"):
+        label = {label_col: record.pop(label_col)}
+        result = send_example.remote(model_id, record, label)
+        results.append(result)
+    return ray.get(results)
 
 
 def run_demo():
@@ -41,22 +52,15 @@ def run_demo():
     model_id = response.json()["model_id"]
     print(f"Model id :: {model_id}")
 
-    # Make some predictions and observe the label.
-    for record in train.to_dict(orient="records"):
-        label = {dataset.label_col: record.pop(dataset.label_col)}
-        prediction_id, probs = send_example(model_id, record, label)
-        print(f"prediction_id :: {prediction_id} probs :: {probs}")
-
     # Train the model.
+    send_examples(model_id, train, dataset.label_col)
     response = requests.get("http://localhost:8000/models/fit")
     response.raise_for_status()
 
-    # Make some more predictions.
+    # Make predictions.
     correct, total = 0, 0
-    for record in test.to_dict(orient="records"):
-        label = record.pop(dataset.label_col)
-        prediction_id, probs = send_example(model_id, record)  # No label.
-        print(f"prediction_id :: {prediction_id} probs :: {probs} label :: {label}")
+    results = send_examples(model_id, test, dataset.label_col)
+    for _, probs, label in results:
         pred = "good" if probs["good"] >= 0.5 else "bad"
         if pred == label:
             correct += 1
