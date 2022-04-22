@@ -54,8 +54,8 @@ class OpenMLTask:
         test = self.df[self.df[self.fold_col] == test_fold]
         all_cols = self.feature_cols + [self.label_col]
         return Dataset(
-            train=train[all_cols].copy(),
-            test=test[all_cols].copy(),
+            train=train[all_cols],
+            test=test[all_cols],
             feature_cols=self.feature_cols,
             numerical_cols=self.numerical_cols,
             categorical_cols=self.categorical_cols,

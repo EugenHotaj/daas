@@ -174,9 +174,10 @@ class LightGBMModel:
             "metric": [self.metric],
             "num_boost_round": 500,
             "early_stopping_rounds": 50,
-            # TODO(ehotaj): Use a more principled approach to set num_leaves.
-            "num_leaves": 5 if len(df) <= 2500 else None,
         }
+        # TODO(ehotaj): Use a more principled approach to set num_leaves.
+        if len(df) <= 2500:
+            params["num_leaves"] = 5
         result = lgbm.cv(params=params, train_set=train_set, return_cvbooster=True)
         self.cv_booster = result["cvbooster"]
         self.best_iteration = self.cv_booster.best_iteration
