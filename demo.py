@@ -36,8 +36,7 @@ def send_examples(model_id, df, label_col):
 
 
 def run_demo():
-    dataset = openml_utils.dataset_from_task(31, 9, n_valid_folds=1)
-    train, test = pd.concat([dataset.train, dataset.valid]), dataset.test
+    dataset = openml_utils.dataset_from_task(31, 9)
 
     # Create model.
     request = {
@@ -53,13 +52,13 @@ def run_demo():
     print(f"Model id :: {model_id}")
 
     # Train the model.
-    send_examples(model_id, train, dataset.label_col)
+    send_examples(model_id, dataset.train, dataset.label_col)
     response = requests.get("http://localhost:8000/models/fit")
     response.raise_for_status()
 
     # Make predictions.
     correct, total = 0, 0
-    results = send_examples(model_id, test, dataset.label_col)
+    results = send_examples(model_id, dataset.test, dataset.label_col)
     for _, probs, label in results:
         pred = "good" if probs["good"] >= 0.5 else "bad"
         if pred == label:
