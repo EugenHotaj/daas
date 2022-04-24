@@ -230,6 +230,8 @@ class Pipeline:
         self.categorical_columns = categorical_columns
         self.label_column = label_column
 
+        self.is_trained = False
+
         # Create once self.fit() is called.
         self.numerical_encoder = None
         self.categorical_encoder = None
@@ -296,6 +298,7 @@ class Pipeline:
         df = self._transform_raw_features(df)
         self.model.fit(df)
         self.prediction_column = self.model.prediction_column
+        self.is_trained = True
 
     def predict(self, df: pd.DataFrame) -> pd.DataFrame:
         """Returns a copy of the dataframe with predictions."""

@@ -45,17 +45,17 @@ class Server:
     def __init__(self):
         self.features_table = {}
         self.labels_table = {}
-        self.model = None
+        self.model_store = {}
 
     @app.get("/models/fit")
-    async def test_fit_model(self):
+    async def test_fit_model(self, model_id: int):
         """Fits the model for testing purposes."""
         joined = []
         for prediction_id, features in self.features_table.items():
             label = self.labels_table[prediction_id]
             joined.append({**features, **label})
         train_df = pd.DataFrame.from_records(joined)
-        self.model.fit(train_df)
+        self.model_store[model_id].fit(train_df)
         return {}
 
     @app.post("/models/create", response_model=CreateModelResponse)
@@ -65,12 +65,13 @@ class Server:
         for name, type_ in request.feature_schema.items():
             array = numerical_columns if type_ == "num" else categorical_columns
             array.append(name)
-        self.model = pipeline.Pipeline(
+        model_id = len(self.model_store)
+        self.model_store[model_id] = pipeline.Pipeline(
             numerical_columns=numerical_columns,
             categorical_columns=categorical_columns,
             label_column=request.label_column,
         )
-        return CreateModelResponse(model_id=1)
+        return CreateModelResponse(model_id=model_id)
 
     @app.post("/models/predict", response_model=PredictResponse)
     async def predict(self, request: PredictRequest) -> PredictResponse:
@@ -80,20 +81,18 @@ class Server:
         prediction_id = len(self.features_table)
         self.features_table[prediction_id] = example
 
-        # Model has not been trained yet. Return empty probs and leave it to the user
-        # to handle this case.
-        if not self.model.model:
+        model = self.model_store[request.model_id]
+
+        # Return empty probs when model has not yet been trained.
+        if not model.is_trained:
             return PredictResponse(prediction_id=prediction_id, probs={})
 
         # Predict on the example if a model has been trained.
         df = pd.DataFrame.from_records([example])
-        probs = self.model.predict(df)[self.model.prediction_column].values
+        probs = model.predict(df)[model.prediction_column].values
         return PredictResponse(
             prediction_id=prediction_id,
-            probs={
-                self.model.classes[1]: probs[0],
-                self.model.classes[0]: 1 - probs[0],
-            },
+            probs={model.classes[1]: probs[0], model.classes[0]: 1 - probs[0]},
         )
 
     @app.post("/models/train", response_model=TrainResponse)

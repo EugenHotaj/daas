@@ -53,7 +53,7 @@ def run_demo():
 
     # Train the model.
     send_examples(model_id, dataset.train, dataset.label_col)
-    response = requests.get("http://localhost:8000/models/fit")
+    response = requests.get(f"http://localhost:8000/models/fit?model_id={model_id}")
     response.raise_for_status()
 
     # Make predictions.
