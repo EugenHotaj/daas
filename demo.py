@@ -60,8 +60,12 @@ def run_demo():
     correct, total = 0, 0
     results = send_examples(model_id, dataset.test, dataset.label_col)
     for _, probs, label in results:
-        pred = "good" if probs["good"] >= 0.5 else "bad"
-        if pred == label:
+        best_pred, best_prob = None, 0.0
+        for pred, prob in probs.items():
+            if prob > best_prob:
+                best_prob = prob
+                best_pred = pred
+        if best_pred == label:
             correct += 1
         total += 1
     print(f"Accuracy :: {correct / total:.2f}")

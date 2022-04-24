@@ -90,8 +90,10 @@ class Server:
         probs = self.model.predict(df)[self.model.prediction_column].values
         return PredictResponse(
             prediction_id=prediction_id,
-            # TODO(ehotaj): Do not hardcode the credit-g label here.
-            probs={"good": probs[0], "bad": 1.0 - probs[0]},
+            probs={
+                self.model.classes[1]: probs[0],
+                self.model.classes[0]: 1 - probs[0],
+            },
         )
 
     @app.post("/models/train", response_model=TrainResponse)

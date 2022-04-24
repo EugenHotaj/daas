@@ -146,6 +146,13 @@ class LabelEncoder(Encoder):
             encoder=encoder, in_dtype=str, out_dtype=np.int64, columns=[column]
         )
 
+        # Set after fit() is called.
+        self.classes = None
+
+    def fit(self, df: pd.DataFrame) -> None:
+        super().fit(df)
+        self.classes = self._label_encoder.categories_[0].tolist()
+
     @property
     def _indicator(self):
         return None
@@ -229,6 +236,7 @@ class Pipeline:
         self.label_encoder = None
         self.model = None
         self.prediction_column = None
+        self.classes = None
 
         self._processed_feature_columns = []
         self._processed_label_column = None
@@ -275,6 +283,7 @@ class Pipeline:
         # Fit label transform.
         self.label_encoder = LabelEncoder(column=self.label_column)
         self.label_encoder.fit(df)
+        self.classes = self.label_encoder.classes
         self._processed_label_column = self.label_encoder.processed_columns[0]
 
         # Fit model.
