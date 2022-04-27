@@ -29,6 +29,7 @@ def send_example(model_id, features, label):
 def send_examples(model_id, df, label_col):
     results = []
     for record in df.to_dict(orient="records"):
+        record = {k: str(v) for k, v in record.items()}
         label = {label_col: record.pop(label_col)}
         result = send_example.remote(model_id, record, label)
         results.append(result)
@@ -41,8 +42,8 @@ def run_demo():
     # Create model.
     request = {
         "feature_schema": {
-            **{key: "num" for key in dataset.numerical_cols},
-            **{key: "cat" for key in dataset.categorical_cols},
+            **{key: "float" for key in dataset.numerical_cols},
+            **{key: "str" for key in dataset.categorical_cols},
         },
         "label_column": dataset.label_col,
     }

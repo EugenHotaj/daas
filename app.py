@@ -1,4 +1,4 @@
-from typing import Dict, Union
+from typing import Dict, List, Union
 
 from automl import openml_utils
 from automl import pipeline
@@ -63,7 +63,7 @@ class Server:
         """Creates a new model with the given schema."""
         numerical_columns, categorical_columns = [], []
         for name, type_ in request.feature_schema.items():
-            array = numerical_columns if type_ == "num" else categorical_columns
+            array = numerical_columns if type_ == "float" else categorical_columns
             array.append(name)
         model_id = len(self.model_store)
         self.model_store[model_id] = pipeline.Pipeline(
@@ -76,24 +76,34 @@ class Server:
     @app.post("/models/predict", response_model=PredictResponse)
     async def predict(self, request: PredictRequest) -> PredictResponse:
         """Stores the example and (possibly) returns model predictions."""
-        # Store the observed features so we can later join them with the label.
-        example = request.features
-        prediction_id = len(self.features_table)
-        self.features_table[prediction_id] = example
+        return await self._batch_predict(request)
 
-        model = self.model_store[request.model_id]
+    @serve.batch
+    async def _batch_predict(
+        self, requests: List[PredictRequest]
+    ) -> List[PredictResponse]:
+        responses = []
+        for request in requests:
+            # Store the observed features so we can later join them with the label.
+            example = request.features
+            prediction_id = len(self.features_table)
+            self.features_table[prediction_id] = example
 
-        # Return empty probs when model has not yet been trained.
-        if not model.is_trained:
-            return PredictResponse(prediction_id=prediction_id, probs={})
-
-        # Predict on the example if a model has been trained.
-        df = pd.DataFrame.from_records([example])
-        probs = model.predict(df)[model.prediction_column].values
-        return PredictResponse(
-            prediction_id=prediction_id,
-            probs={model.classes[1]: probs[0], model.classes[0]: 1 - probs[0]},
-        )
+            model = self.model_store[request.model_id]
+            if model.is_trained:
+                # Predict on the example if a model has been trained.
+                df = pd.DataFrame.from_records([example])
+                # TODO(eugenhotaj): Actually batch the requests to the model.
+                probs = model.predict(df)[model.prediction_column].values
+                response = PredictResponse(
+                    prediction_id=prediction_id,
+                    probs={model.classes[1]: probs[0], model.classes[0]: 1 - probs[0]},
+                )
+            else:
+                # Return empty probs when model has not yet been trained.
+                response = PredictResponse(prediction_id=prediction_id, probs={})
+            responses.append(response)
+        return responses
 
     @app.post("/models/train", response_model=TrainResponse)
     async def train(self, request: TrainRequest) -> TrainResponse:
