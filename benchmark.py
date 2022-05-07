@@ -73,7 +73,7 @@ def print_metrics(task_id: int, task_name: str, metrics: TMetrics) -> None:
 
 
 def main(args):
-    ray.init(local_mode=args.local)
+    ray.init(address="auto", local_mode=args.local)
     if args.dataset is None:
         futures = {k: run_on_task.remote(v) for k, v in BENCHMARK_TASKS.items()}
     else:
