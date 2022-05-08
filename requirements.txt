@@ -1,7 +1,9 @@
+cryptography
+google-api-python-client
 lightgbm
 numpy
 openml
 pandas
-ray
+ray[default]
 scipy
 sklearn

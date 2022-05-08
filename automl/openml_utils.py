@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pathlib
 import pickle
 from dataclasses import dataclass
 import os
@@ -64,7 +65,9 @@ class OpenMLTask:
 
 
 def task_path(task_id: int) -> str:
-    return os.path.join("data/openml", str(task_id), "OpenMLTask.pkl")
+    # TODO(ehotaj): Do not hardcode data directory.
+    dir_path = pathlib.Path(__file__).parent.parent / "data" / "openml" / str(task_id)
+    return dir_path / "OpenMLTask.pkl"
 
 
 def dataset_from_task(task_id: int, test_fold: int) -> Dataset:
