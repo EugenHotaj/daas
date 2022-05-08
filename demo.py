@@ -1,7 +1,7 @@
 import requests
 
-from app import Server
 from daas.benchmark import openml_utils
+from daas.server.app import Server
 import ray
 
 

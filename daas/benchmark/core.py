@@ -8,13 +8,14 @@ from sklearn import metrics as sklearn_metrics
 import pandas as pd
 
 from daas.automl import pipeline as automl_pipeline
-from daas.benchmark import openml_utils
-from daas.benchmark.download_data import BENCHMARK_TASKS
+from daas.benchmark.openml_utils import BENCHMARK_TASKS, dataset_from_task
+
+TMetrics = Dict[str, Dict[str, Tuple[float, float]]]
 
 
 @ray.remote
 def one_fold(task_id: int, test_fold: int) -> Dict[str, Dict[str, float]]:
-    dataset = openml_utils.dataset_from_task(task_id, test_fold)
+    dataset = dataset_from_task(task_id, test_fold)
     pipeline = automl_pipeline.Pipeline(
         numerical_columns=dataset.numerical_cols,
         categorical_columns=dataset.categorical_cols,
@@ -37,9 +38,6 @@ def one_fold(task_id: int, test_fold: int) -> Dict[str, Dict[str, float]]:
         }
         metrics[split] = metric
     return metrics
-
-
-TMetrics = Dict[str, Dict[str, Tuple[float, float]]]
 
 
 @ray.remote
@@ -72,19 +70,10 @@ def print_metrics(task_id: int, task_name: str, metrics: TMetrics) -> None:
     print()
 
 
-def main(args):
-    ray.init(address="auto", local_mode=args.local)
-    if args.dataset is None:
-        futures = {k: run_on_task.remote(v) for k, v in BENCHMARK_TASKS.items()}
+def run(dataset: Optional[str] = None) -> None:
+    if dataset:
+        futures = {dataset: run_on_task.remote(BENCHMARK_TASKS[dataset])}
     else:
-        futures = {args.dataset: run_on_task.remote(BENCHMARK_TASKS[args.dataset])}
+        futures = {k: run_on_task.remote(v) for k, v in BENCHMARK_TASKS.items()}
     for task_name, result in zip(futures.keys(), ray.get(list(futures.values()))):
         print_metrics(BENCHMARK_TASKS[task_name], task_name, result)
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--local", action="store_true", default=False)
-    parser.add_argument("--dataset", choices=BENCHMARK_TASKS.keys(), default=None)
-    args = parser.parse_args()
-    main(args)
