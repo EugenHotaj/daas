@@ -1,8 +1,7 @@
 import requests
 
 from app import Server
-from automl import openml_utils
-import pandas as pd
+from daas.benchmark import openml_utils
 import ray
 
 

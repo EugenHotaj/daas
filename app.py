@@ -1,7 +1,6 @@
 from typing import Dict, List, Union
 
-from automl import openml_utils
-from automl import pipeline
+from daas.automl import pipeline
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from ray import serve

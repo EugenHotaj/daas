@@ -7,9 +7,9 @@ import ray
 from sklearn import metrics as sklearn_metrics
 import pandas as pd
 
-from automl import openml_utils
-from automl import pipeline as automl_pipeline
-from download_data import BENCHMARK_TASKS
+from daas.automl import pipeline as automl_pipeline
+from daas.benchmark import openml_utils
+from daas.benchmark.download_data import BENCHMARK_TASKS
 
 
 @ray.remote

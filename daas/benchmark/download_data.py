@@ -5,21 +5,7 @@ from typing import List
 
 import openml
 
-from automl import openml_utils
-
-BENCHMARK_TASKS = {
-    "kr-vs-kp": 3,
-    "credit-g": 31,
-    "kc1": 3917,
-    "adult": 7592,
-    "phoneme": 9952,
-    "nomao": 9977,
-    "bank-marketing": 14965,
-    "higgs": 146606,
-    "jasmine": 168911,
-    "sylvine": 168912,
-}
-FOLD_COL = "fold"
+from daas.benchmark.openml_utils import BENCHMARK_TASKS, FOLD_COL, task_path, OpenMLTask
 
 
 def download_openml_tasks(task_ids: List[int]):
@@ -41,9 +27,9 @@ def download_openml_tasks(task_ids: List[int]):
             idxs = idxs[0].test
             df.loc[idxs, FOLD_COL] = split
 
-        out_path = openml_utils.task_path(task.task_id)
+        out_path = task_path(task.task_id)
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        task = openml_utils.OpenMLTask(
+        task = OpenMLTask(
             df, feature_cols, numerical_cols, categorical_cols, label_col, FOLD_COL
         )
         task.dump(out_path)

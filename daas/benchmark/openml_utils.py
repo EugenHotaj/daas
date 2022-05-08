@@ -11,6 +11,20 @@ from typing import List
 
 import pandas as pd
 
+BENCHMARK_TASKS = {
+    "kr-vs-kp": 3,
+    "credit-g": 31,
+    "kc1": 3917,
+    "adult": 7592,
+    "phoneme": 9952,
+    "nomao": 9977,
+    "bank-marketing": 14965,
+    "higgs": 146606,
+    "jasmine": 168911,
+    "sylvine": 168912,
+}
+FOLD_COL = "fold"
+
 
 @dataclass
 class Dataset:
@@ -66,7 +80,7 @@ class OpenMLTask:
 
 def task_path(task_id: int) -> str:
     # TODO(ehotaj): Do not hardcode data directory.
-    dir_path = pathlib.Path(__file__).parent.parent / "data" / "openml" / str(task_id)
+    dir_path = pathlib.Path(__file__).parent / "data" / "openml" / str(task_id)
     return dir_path / "OpenMLTask.pkl"
 
 
