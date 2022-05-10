@@ -1,17 +1,10 @@
+# Defaults: https://github.com/ray-project/ray/blob/master/python/ray/autoscaler/gcp/defaults.yaml
+
 # An unique identifier for the head node and workers of this cluster.
 cluster_name: default
 
 # The maximum number of workers nodes to launch in addition to the head node.
 max_workers: 1
-
-# The autoscaler will scale up the cluster faster with higher upscaling speed.
-# E.g., if the task requires adding more nodes then autoscaler will gradually
-# scale up the cluster in chunks of upscaling_speed*currently_running_nodes.
-# This number should be > 0.
-upscaling_speed: 1.0
-
-# If a node is idle for this many minutes, it will be removed.
-idle_timeout_minutes: 5
 
 # Cloud-provider specific configuration.
 provider:
@@ -19,10 +12,6 @@ provider:
     region: us-west1
     availability_zone: us-west1-a
     project_id: decisions-as-a-service # Globally unique project id
-
-# How Ray will authenticate with newly launched nodes.
-auth:
-    ssh_user: ubuntu
 
 # Tell the autoscaler the allowed node types and the resources they provide.
 # The key is the name of the node type, which is just for debugging purposes.
@@ -45,18 +34,8 @@ available_node_types:
                   diskSizeGb: 50
                   # See https://cloud.google.com/compute/docs/images for more images
                   sourceImage: projects/deeplearning-platform-release/global/images/family/common-cpu
-
             # Additional options can be found in in the compute docs at
             # https://cloud.google.com/compute/docs/reference/rest/v1/instances/insert
-
-            # If the network interface is specified as below in both head and worker
-            # nodes, the manual network config is used.  Otherwise an existing subnet is
-            # used.  To use a shared subnet, ask the subnet owner to grant permission
-            # for 'compute.subnetworks.use' to the ray autoscaler account...
-            # networkInterfaces:
-            #   - kind: compute#networkInterface
-            #     subnetwork: path/to/subnet
-            #     aliasIpRanges: []
     ray_worker_small:
         # The minimum number of worker nodes of this type to launch.
         # This number should be >= 0.
@@ -84,14 +63,8 @@ available_node_types:
             # Comment this out to use on-demand.
             scheduling:
               - preemptible: true
-            # Un-Comment this to launch workers with the Service Account of the Head Node
-            # serviceAccounts:
-            # - email: ray-autoscaler-sa-v1@<project_id>.iam.gserviceaccount.com
-            #   scopes:
-            #   - https://www.googleapis.com/auth/cloud-platform
-
-    # Additional options can be found in in the compute docs at
-    # https://cloud.google.com/compute/docs/reference/rest/v1/instances/insert
+            # Additional options can be found in in the compute docs at
+            # https://cloud.google.com/compute/docs/reference/rest/v1/instances/insert
 
 # Specify the node type of the head node (as configured above).
 head_node_type: ray_head_default
@@ -101,10 +74,6 @@ head_node_type: ray_head_default
 file_mounts: {
     "/home/ubuntu/daas": "/Users/eugenhotaj/Desktop/daas"
 }
-
-# Whether changes to directories in file_mounts or cluster_synced_files in the head node
-# should sync to the worker node continuously
-file_mounts_sync_continuously: False
 
 # Patterns for files to exclude when running rsync up or rsync down
 rsync_exclude:
@@ -126,20 +95,3 @@ setup_commands:
     - conda activate ray && echo 'conda activate ray' >> ~/.bashrc  
     - python3 -m pip install --upgrade pip
     - python3 -m pip install -e /home/ubuntu/daas/
-
-# Command to start ray on the head node. You don't need to change this.
-head_start_ray_commands:
-    - ray stop
-    - >-
-      ray start
-      --head
-      --port=6379
-      --object-manager-port=8076
-      --autoscaling-config=~/ray_bootstrap_config.yaml
-# Command to start ray on worker nodes. You don't need to change this.
-worker_start_ray_commands:
-    - ray stop
-    - >-
-      ray start
-      --address=$RAY_HEAD_IP:6379
-      --object-manager-port=8076
