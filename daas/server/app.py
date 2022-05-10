@@ -1,11 +1,12 @@
 from typing import Dict, List, Union
 
-from daas.automl import pipeline
+import pandas as pd
+import ray
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from ray import serve
-import pandas as pd
-import ray
+
+from daas.automl import pipeline
 
 app = FastAPI()
 

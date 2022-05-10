@@ -4,9 +4,7 @@ import lightgbm as lgbm
 import numpy as np
 import pandas as pd
 import scipy
-from sklearn import impute
-from sklearn import pipeline
-from sklearn import preprocessing
+from sklearn import impute, pipeline, preprocessing
 
 TDtype = Union[str, type, np.dtype]
 

@@ -1,7 +1,8 @@
+import argparse
+
+import ray
 from daas.benchmark.core import run
 from daas.benchmark.openml_utils import BENCHMARK_TASKS
-import argparse
-import ray
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

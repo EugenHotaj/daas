@@ -3,9 +3,9 @@ import collections
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
+import pandas as pd
 import ray
 from sklearn import metrics as sklearn_metrics
-import pandas as pd
 
 from daas.automl import pipeline as automl_pipeline
 from daas.benchmark.openml_utils import BENCHMARK_TASKS, dataset_from_task

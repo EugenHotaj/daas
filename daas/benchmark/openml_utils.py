@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import os
+
 import pathlib
 import pickle
 from dataclasses import dataclass
-import os
-import numpy as np
 from typing import List
+
+import numpy as np
 
 import pandas as pd
 

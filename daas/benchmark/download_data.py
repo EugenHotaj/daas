@@ -5,7 +5,7 @@ from typing import List
 
 import openml
 
-from daas.benchmark.openml_utils import BENCHMARK_TASKS, FOLD_COL, task_path, OpenMLTask
+from daas.benchmark.openml_utils import BENCHMARK_TASKS, FOLD_COL, OpenMLTask, task_path
 
 
 def download_openml_tasks(task_ids: List[int]):
