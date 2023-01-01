@@ -1,8 +1,7 @@
 from typing import Dict, List, Union
 
 import pandas as pd
-import ray
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from pydantic import BaseModel
 from ray import serve
 

@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import List, Union
 
 import lightgbm as lgbm
 import numpy as np
@@ -172,7 +172,7 @@ class LightGBMModel:
         self.best_iteration = None
 
     def fit(self, df: pd.DataFrame) -> None:
-        # TODO(ehotaj): Use a more principled approach to stabalize small datasets.
+        # TODO(ehotaj): Use a more principled approach to stabilize small datasets.
         # Some possibilities: (1) less complex model, (2) tune hparams.
         if len(df) < 10000:
             replicates = int(np.ceil(10000 / len(df)))
@@ -254,7 +254,7 @@ class Pipeline:
     def fit(self, df: pd.DataFrame) -> None:
         """Fits the whole AutoML pipeline on the given train set."""
         # TODO(ehotaj): Shuffle dataset... should not make a difference but somehow
-        # it boosts performance for some datsets?
+        # it boosts performance for some datasets?
         df = df.iloc[np.random.permutation(len(df))]
 
         # Fit feature transforms.

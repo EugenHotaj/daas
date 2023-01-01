@@ -1,6 +1,7 @@
 # 🏖 Automate boring decisions with ML
 
-Decisions as a Service (DaaS) is an efficent AutoML system built on top of [Ray](https://github.com/ray-project/ray).
+Decisions as a Service (DaaS) is an efficient AutoML system built on top of 
+[Ray](https://github.com/ray-project/ray).
 
 Example:
 ```python3
